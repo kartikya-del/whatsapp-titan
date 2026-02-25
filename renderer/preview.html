@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="UTF-8" />
+    <title>WhatsApp Titan 3.0 [BROWSER PREVIEW]</title>
+    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="banner.css">
+    <link rel="stylesheet" href="warmer.css">
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap"
+        rel="stylesheet">
+</head>
+
+<body>
+    <aside id="app-sidebar">
+        <div class="brand-section">
+            <div class="brand-logo">T</div>
+            <div class="brand-name">TITAN 3.0</div>
+        </div>
+        <nav class="nav-menu">
+            <div class="nav-category">Core Ops</div>
+            <div class="nav-item active" data-tab="dashboard">
+                <span class="icon">📊</span><span class="nav-item-label">Dashboard</span>
+            </div>
+            <div class="nav-item" data-tab="devices">
+                <span class="icon">📱</span><span class="nav-item-label">Devices</span>
+            </div>
+            <div class="nav-item" data-tab="campaigns">
+                <span class="icon">🚀</span><span class="nav-item-label">Campaigns</span>
+            </div>
+            <div class="nav-category">Extraction</div>
+            <div class="nav-item" data-tab="grabber">
+                <span class="icon">⚡</span><span class="nav-item-label">Group Grabber</span>
+            </div>
+            <div class="nav-category">Automation</div>
+            <div class="nav-item" data-tab="autoreply">
+                <span class="icon">🤖</span><span class="nav-item-label">Auto Reply</span>
+            </div>
+            <div class="nav-item" data-tab="warmer">
+                <span class="icon">🔥</span><span class="nav-item-label">Number Warmer</span>
+            </div>
+            <div class="nav-category">System</div>
+            <div class="nav-item" data-tab="reports">
+                <span class="icon">📈</span><span class="nav-item-label">Reports</span>
+            </div>
+            <div class="nav-item" data-tab="settings">
+                <span class="icon">⚙️</span><span class="nav-item-label">Settings</span>
+            </div>
+        </nav>
+        <div id="sidebar-toggle-btn" title="Toggle Sidebar">‹</div>
+        <div class="sidebar-version" style="padding: 20px; font-size: 11px; color: #475569; text-align: center;">v1.0.11
+            Test</div>
+    </aside>
+    <main id="main-wrapper">
+        <header id="page-header">
+            <div id="page-title">Dashboard</div>
+            <div id="page-actions"></div>
+        </header>
+        <div id="content-body" class="animate-in"></div>
+    </main>
+
+    <!-- MOCK BRIDGE -->
+    <script src="mock_bridge.js"></script>
+    <!-- APP LOGIC -->
+    <script src="warmer_ui.js"></script>
+    <script src="app.js"></script>
+</body>
+
+</html>

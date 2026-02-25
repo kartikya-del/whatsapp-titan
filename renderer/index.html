@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy"
+    content="default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'self' https://fonts.googleapis.com">
+  <title>WhatsApp Titan 3.0</title>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="banner.css">
+  <link rel="stylesheet" href="warmer.css">
+  <link rel="stylesheet" href="license.css">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap"
+    rel="stylesheet">
+</head>
+
+<body>
+
+  <!-- SIDEBAR NAVIGATION -->
+  <aside id="app-sidebar">
+    <div class="brand-section">
+      <div class="brand-logo">T</div>
+      <div class="brand-name">TITAN 3.0</div>
+    </div>
+
+    <nav class="nav-menu">
+      <div class="nav-category">Core Ops</div>
+      <div class="nav-item active" data-tab="dashboard">
+        <span class="icon">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="3" width="7" height="7" rx="1" />
+            <rect x="14" y="3" width="7" height="7" rx="1" />
+            <rect x="3" y="14" width="7" height="7" rx="1" />
+            <rect x="14" y="14" width="7" height="7" rx="1" />
+          </svg>
+        </span><span class="nav-item-label">Dashboard</span>
+      </div>
+      <div class="nav-item" data-tab="devices">
+        <span class="icon">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round">
+            <rect x="7" y="2" width="10" height="20" rx="2" />
+            <circle cx="12" cy="18" r="1" fill="currentColor" />
+          </svg>
+        </span><span class="nav-item-label">Devices</span>
+      </div>
+      <div class="nav-item" data-tab="campaigns">
+        <span class="icon">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round">
+            <line x1="22" y1="2" x2="11" y2="13" />
+            <polygon points="22 2 15 22 11 13 2 9 22 2" />
+          </svg>
+        </span><span class="nav-item-label">Campaigns</span>
+      </div>
+
+      <div class="nav-category">Extraction</div>
+      <div class="nav-item" data-tab="grabber">
+        <span class="icon">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round">
+            <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
+          </svg>
+        </span><span class="nav-item-label">Group Grabber</span>
+      </div>
+
+      <div class="nav-category">Automation</div>
+      <div class="nav-item" data-tab="autoreply">
+        <span class="icon">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+            <path d="M8 10h.01M12 10h.01M16 10h.01" stroke-width="2.5" />
+          </svg>
+        </span><span class="nav-item-label">Auto Reply</span>
+      </div>
+      <div class="nav-item" data-tab="warmer">
+        <span class="icon">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
+          </svg>
+        </span><span class="nav-item-label">Number Warmer</span>
+      </div>
+
+      <div class="nav-category">System</div>
+      <div class="nav-item" data-tab="reports">
+        <span class="icon">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round">
+            <line x1="18" y1="20" x2="18" y2="10" />
+            <line x1="12" y1="20" x2="12" y2="4" />
+            <line x1="6" y1="20" x2="6" y2="14" />
+          </svg>
+        </span><span class="nav-item-label">Reports</span>
+      </div>
+    </nav>
+
+
+    <div id="sidebar-footer" style="padding: 20px; border-top: 1px solid rgba(0,0,0,0.03); margin-top: auto;">
+
+      <!-- License Expiry Badge -->
+      <div id="license-expiry-badge"
+        style="display:none; margin-bottom:10px; padding:10px 12px; border-radius:10px; font-size:11px; font-weight:700; text-align:center; line-height:1.5;">
+      </div>
+
+      <div class="sidebar-version"
+        style="margin-top: 12px; font-size: 10px; color: #94a3b8; text-align: center; font-weight: 600;">
+        v1.0.11 Stable
+      </div>
+    </div>
+
+    <!-- Toggle Button -->
+    <button id="sidebar-toggle-btn" title="Collapse Sidebar">‹</button>
+  </aside>
+
+  <!-- MAIN CONTENT AREA -->
+  <main id="main-wrapper">
+    <header id="page-header">
+      <div id="page-title">Dashboard</div>
+      <div id="page-actions">
+        <!-- Dynamic Action Buttons will be injected here -->
+      </div>
+    </header>
+
+    <div id="content-body" class="animate-in">
+      <!-- Dynamic Content Area -->
+    </div>
+  </main>
+
+  <!-- MODALS (Hidden by default) -->
+  <div id="phone-modal" class="phone-modal-hidden">
+    <div class="modal-content">
+      <h3>Add New Device</h3>
+      <p>Scan to link a new WhatsApp account.</p>
+      <div id="modal-error" style="color:var(--status-error); min-height:20px;"></div>
+      <input type="tel" id="phone-input" placeholder="Phone Number (e.g. 91888...)" />
+      <div class="modal-buttons">
+        <button id="modal-confirm" class="btn-primary">Connect</button>
+        <button id="modal-cancel" class="btn-secondary">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="confirm-modal" class="phone-modal-hidden">
+    <div class="modal-content">
+      <h3 id="confirm-title">Confirm Action</h3>
+      <p id="confirm-message">Are you sure?</p>
+      <div class="modal-buttons">
+        <button id="confirm-yes" class="btn-primary" style="background:#ef4444;">YES</button>
+        <button id="confirm-no" class="btn-secondary">NO</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- LIVE BANNER -->
+  <div id="campaign-status-banner" class="campaign-banner hidden">
+    <div class="banner-content">
+      <div class="banner-left">
+        <div class="pulse-dot"></div> <span id="banner-status-text">Active</span>
+      </div>
+      <div class="banner-right"><span id="banner-count">0/0</span> <span id="banner-eta">--:--</span></div>
+    </div>
+    <div class="banner-progress-track">
+      <div id="banner-progress-fill" class="banner-progress-fill" style="width:0%"></div>
+    </div>
+  </div>
+
+  <script src="warmer_ui.js"></script>
+  <script src="license.js"></script>
+  <script src="app.js"></script>
+</body>
+
+</html>

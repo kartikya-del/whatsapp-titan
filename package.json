@@ -1,0 +1,39 @@
+{
+  "name": "whatsapp-extractor-ui",
+  "version": "1.0.11",
+  "main": "electron/main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron --max-old-space-size=4096 .",
+    "obfuscate": "node scripts/obfuscate.js",
+    "dist": "electron-builder --windows",
+    "dist:safe": "node scripts/obfuscate.js && electron-builder --windows"
+  },
+  "build": {
+    "appId": "com.whatsapp.titan",
+    "productName": "WhatsApp Titan",
+    "directories": {
+      "output": "dist"
+    },
+    "win": {
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  },
+  "dependencies": {
+    "@google/generative-ai": "^0.24.1",
+    "openai": "^4.104.0",
+    "puppeteer": "^24.36.0",
+    "qrcode-terminal": "^0.12.0",
+    "whatsapp-web.js": "^1.34.6",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "electron": "^40.0.0",
+    "electron-builder": "^25.1.8",
+    "javascript-obfuscator": "^4.1.1"
+  }
+}
