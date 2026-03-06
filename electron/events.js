@@ -1,12 +1,8 @@
-/**
- * Constants for internal application events and states.
- * Standardizes messaging between back-end engines and UI controllers.
- */
 module.exports = {
     START: 'START',
-    STOP: 'STOP',
+    STATUS: 'STATUS',
     GROUPS: 'GROUPS',
     CONTACTS: 'CONTACTS',
-    READY: 'READY',
+    SUMMARY: 'SUMMARY',
     ERROR: 'ERROR'
-};
+}

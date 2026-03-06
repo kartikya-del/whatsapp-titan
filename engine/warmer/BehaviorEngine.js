@@ -1,135 +1,118 @@
 /**
- * BehaviorEngine simulates human interaction patterns on WhatsApp Web.
- * it handles realistic typing speeds, conversational pauses, and passive presence.
+ * BehaviorEngine executes safe, passive actions to simulate human usage.
  */
 class BehaviorEngine {
     constructor() {
-        this.messagePool = [
-            "Hey, how's it going?",
-            "Did you see the latest update?",
-            "Just checking in.",
-            "How are things at your end?",
-            "Are we still on for later?",
-            "Hey there!",
-            "I'll get back to you on that.",
-            "Did you get my missed call?",
-            "Let's catch up soon.",
-            "Hope you're having a good day.",
-            "Talk to you later.",
-            "Interesting...",
-            "Sounds good to me.",
-            "What do you think?",
-            "Checking the schedule now."
+        this.selectors = {
+            chatList: '#pane-side',
+            chatItems: 'div[role="listitem"]',
+            messagesArea: '[data-testid="messages-container"]',
+            inputArea: 'div[contenteditable="true"]',
+            activeChatHeader: 'header div[role="button"]'
+        };
+        this.onActivity = null;
+    }
+
+    setActivityCallback(cb) {
+        this.onActivity = cb;
+    }
+
+    /**
+     * Performs a random passive behavior on the page.
+     */
+    async performRandomBehavior(page) {
+        const actions = [
+            this.openRandomChat,
+            this.scrollChatList,
+            this.scrollChat,
+            this.simulateTyping,
+            this.idlePause
         ];
 
-        console.log('[BEHAVIOR] Human-Mimetic Engine initialized with randomized conversational heuristics.');
-    }
-
-    /**
-     * Picks a random conversational snippet from the pool.
-     */
-    _getRandomMessage() {
-        return this.messagePool[Math.floor(Math.random() * this.messagePool.length)];
-    }
-
-    /**
-     * Randomized integer utility.
-     */
-    _randomInt(min, max) {
-        return Math.floor(Math.random() * (max - min + 1)) + min;
-    }
-
-    /**
-     * Performs a full "message sending" sequence with realistic delays.
-     */
-    async performSequence(page, targetNumber, onLog = console.log) {
-        const message = this._getRandomMessage();
-
-        // Normalize target jid
-        let jid = targetNumber;
-        if (!jid.includes('@')) {
-            if (jid.length === 10) jid = '91' + jid;
-            jid = jid + '@c.us';
-        }
+        const action = actions[Math.floor(Math.random() * actions.length)];
+        console.log(`[BEHAVIOR] Simulation: ${action.name}`);
 
         try {
-            onLog('debug', `Opening chat for target: ${jid}`);
+            await action.call(this, page);
+        } catch (err) {
+            console.error(`[BEHAVIOR] Action ${action.name} failed:`, err.message);
+        }
+    }
 
-            const chat = await page.evaluateHandle(async (target) => {
-                return await window.WWebJS.getChatById(target);
-            }, jid);
+    async openRandomChat(page) {
+        const chats = await page.$$(this.selectors.chatItems);
+        if (chats.length > 0) {
+            const targetIndex = Math.floor(Math.random() * Math.min(chats.length, 15));
+            const chat = chats[targetIndex];
 
-            if (chat) {
-                // Initial "reading" pause
-                await this._sleep(this._randomInt(3000, 15000));
+            // Try to extract JID/ID for TrustGraph
+            const chatId = await page.evaluate(el => {
+                // Heuristic: check data-testid or title
+                return el.getAttribute('data-testid') || el.innerText.split('\n')[0];
+            }, chat);
 
-                onLog('debug', `Viewing chat history with ${targetNumber}...`);
-                await chat.evaluate(c => c.open());
+            await chat.click();
 
-                // Focus/Think pause
-                await this._sleep(this._randomInt(2000, 8000));
-
-                // Calculate human-like typing speed
-                const wpm = this._randomInt(10, 25); // Relaxed typing
-                const charDelay = (60000 / wpm) / 5; // Approx ms per char
-                const totalTypingTime = Math.floor(message.length * charDelay);
-
-                // Show "typing..." status
-                await chat.evaluate(c => c.sendStateTyping());
-
-                onLog('action', `Typing message... (${(totalTypingTime / 1000).toFixed(1)}s at ${wpm} WPM)`);
-                await this._sleep(totalTypingTime);
-
-                // Send the message
-                await page.evaluate(async (target, msg) => {
-                    await window.WWebJS.sendMessage(target, msg);
-                }, jid, message);
-
-                onLog('success', `Message sent: "${message}"`);
-
-                // Post-send "lingering"
-                await this._sleep(this._randomInt(3000, 5000));
-
-                return { success: true, message };
-            } else {
-                throw new Error('Chat object not found for target.');
+            if (this.onActivity && chatId) {
+                this.onActivity('INTERACTION', { chatId });
             }
-        } catch (err) {
-            onLog('error', `Interaction sequence failed for ${targetNumber}: ${err.message}`);
-            await this._sleep(2000);
-            return { success: false, error: err.message };
+
+            await this.idlePause(page, 1500, 3000);
         }
     }
 
-    /**
-     * Simulates passive activity (scrolling, checking statuses).
-     */
-    async performPassive(page, onLog = console.log) {
-        try {
-            onLog('debug', 'Simulating passive usage (scrolling/checking stories)...');
-
-            // Navigate to Status page
-            await page.evaluate(() => {
-                const statusBtn = document.querySelector('[data-icon="status-v3-unread"]') || document.querySelector('[data-icon="status-v3"]');
-                if (statusBtn) statusBtn.click();
-            });
-
-            // Stay on passive views for 10-60 seconds
-            await this._sleep(this._randomInt(10000, 60000));
-
-            onLog('debug', 'Passive simulation complete.');
-            return { success: true, type: 'PASSIVE' };
-        } catch (err) {
-            onLog('error', `Passive activity failed: ${err.message}`);
-            return { success: false, error: err.message };
+    async scrollChatList(page) {
+        const chatList = await page.$(this.selectors.chatList);
+        if (chatList) {
+            const scrollAmount = Math.floor(Math.random() * 800) - 400;
+            await page.evaluate((el, amount) => {
+                el.scrollBy({ top: amount, behavior: 'smooth' });
+            }, chatList, scrollAmount);
         }
     }
 
-    /**
-     * Pause execution.
-     */
-    _sleep(ms) {
-        return new Promise(resolve => setTimeout(resolve, ms));
+    async scrollChat(page) {
+        const messagesArea = await page.$(this.selectors.messagesArea);
+        if (messagesArea) {
+            const scrollAmount = Math.floor(Math.random() * 1200) - 600;
+            await page.evaluate((el, amount) => {
+                el.scrollBy({ top: amount, behavior: 'smooth' });
+            }, messagesArea, scrollAmount);
+        }
+    }
+
+    async simulateTyping(page) {
+        const input = await page.$(this.selectors.inputArea);
+        if (input) {
+            await input.focus();
+
+            const length = Math.floor(Math.random() * 30) + 10;
+            const dummyText = "just checking back on the status of that group";
+            const finalLength = Math.min(length, dummyText.length);
+
+            const minDelay = 150;
+            const maxDelay = 340;
+
+            for (let i = 0; i < finalLength; i++) {
+                const char = dummyText[i] || ' ';
+                await page.keyboard.sendCharacter(char);
+                const jitter = Math.floor(Math.random() * (maxDelay - minDelay + 1)) + minDelay;
+                await new Promise(r => setTimeout(r, jitter));
+                if (Math.random() > 0.95) await new Promise(r => setTimeout(r, 2000));
+            }
+
+            await new Promise(r => setTimeout(r, 2000 + Math.random() * 2000));
+
+            for (let i = 0; i < finalLength; i++) {
+                await page.keyboard.press('Backspace');
+                await new Promise(r => setTimeout(r, 40 + Math.random() * 40));
+            }
+        }
+    }
+
+    async idlePause(page, min = 3000, max = 15000) {
+        const delay = Math.floor(Math.random() * (max - min + 1)) + min;
+        await new Promise(r => setTimeout(r, delay));
     }
 }
 

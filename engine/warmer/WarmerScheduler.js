@@ -1,72 +1,29 @@
-const EventEmitter = require('events');
-
 /**
- * WarmerScheduler manages the timing of warming cycles.
- * It uses a jittered polling approach combined with circadian eligibility
- * to trigger warming tasks at natural-looking intervals.
+ * WarmerScheduler determines delay between behaviors based on circadian intensity.
  */
-class WarmerScheduler extends EventEmitter {
-    constructor(store, circadian) {
-        super();
-        this.store = store;
-        this.circadian = circadian;
-        this.isRunning = false;
-        this.nextTickTimer = null;
+class WarmerScheduler {
+    constructor(circadianEngine) {
+        this.circadian = circadianEngine;
     }
 
     /**
-     * Starts the scheduler.
+     * Calculates the next delay in milliseconds.
+     * baseDelay = random(30s, 180s)
+     * finalDelay = baseDelay / activityLevel
      */
-    start() {
-        if (this.isRunning) return;
-        this.isRunning = true;
-        this._scheduleNextTick();
-    }
+    getNextDelay() {
+        const activityLevel = this.circadian.getActivityLevel();
 
-    /**
-     * Stops the scheduler.
-     */
-    stop() {
-        this.isRunning = false;
-        if (this.nextTickTimer) {
-            clearTimeout(this.nextTickTimer);
-        }
-    }
+        // Randomized jitter
+        const baseDelaySec = Math.floor(Math.random() * (180 - 30 + 1)) + 30;
+        const baseDelayMs = baseDelaySec * 1000;
 
-    /**
-     * Schedules the next recurring tick with random jitter.
-     */
-    _scheduleNextTick() {
-        if (!this.isRunning) return;
+        // Apply circadian scaling
+        // Clamp activityLevel to avoid massive delays if it's near zero
+        const effectiveLevel = Math.max(0.05, activityLevel);
+        const finalDelay = baseDelayMs / effectiveLevel;
 
-        // Base interval between 30 seconds and 3 minutes
-        const minMs = 30000;
-        const maxMs = 180000;
-        const delay = Math.floor(Math.random() * (maxMs - minMs + 1)) + minMs;
-
-        this.nextTickTimer = setTimeout(() => {
-            this._tick();
-        }, delay);
-    }
-
-    /**
-     * Evaluates if a warming session should trigger right now.
-     */
-    async _tick() {
-        if (!this.isRunning) return;
-
-        const isEligible = this.circadian.isCurrentSessionEligible();
-        if (!isEligible) {
-            // Wait for next cycle
-            this._scheduleNextTick();
-            return;
-        }
-
-        // Trigger warming event
-        this.emit('tick');
-
-        // Re-schedule
-        this._scheduleNextTick();
+        return Math.floor(finalDelay);
     }
 }
 

@@ -1,39 +1,26 @@
 {
-  "name": "whatsapp-extractor-ui",
-  "version": "1.0.11",
-  "main": "electron/main.js",
-  "private": true,
-  "scripts": {
-    "start": "electron --max-old-space-size=4096 .",
-    "obfuscate": "node scripts/obfuscate.js",
-    "dist": "electron-builder --windows",
-    "dist:safe": "node scripts/obfuscate.js && electron-builder --windows"
-  },
-  "build": {
-    "appId": "com.whatsapp.titan",
-    "productName": "WhatsApp Titan",
-    "directories": {
-      "output": "dist"
+    "name": "titan-desktop",
+    "version": "1.0.11",
+    "main": "electron/main.js",
+    "scripts": {
+        "start": "electron .",
+        "pack": "electron-builder --dir",
+        "dist": "electron-builder"
     },
-    "win": {
-      "target": "nsis"
+    "dependencies": {
+        "better-sqlite3": "^12.6.2",
+        "csv-writer": "^1.6.0",
+        "electron-store": "^8.1.0",
+        "fs-extra": "^11.3.3",
+        "js-beautify": "^1.15.4",
+        "node-fetch": "^2.7.0",
+        "puppeteer": "^24.35.0",
+        "whatsapp-web.js": "^1.34.4",
+        "xlsx": "^0.18.5"
     },
-    "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true
+    "devDependencies": {
+        "@electron/rebuild": "^4.0.3",
+        "electron": "^33.0.0",
+        "electron-builder": "^24.13.3"
     }
-  },
-  "dependencies": {
-    "@google/generative-ai": "^0.24.1",
-    "openai": "^4.104.0",
-    "puppeteer": "^24.36.0",
-    "qrcode-terminal": "^0.12.0",
-    "whatsapp-web.js": "^1.34.6",
-    "xlsx": "^0.18.5"
-  },
-  "devDependencies": {
-    "electron": "^40.0.0",
-    "electron-builder": "^25.1.8",
-    "javascript-obfuscator": "^4.1.1"
-  }
 }

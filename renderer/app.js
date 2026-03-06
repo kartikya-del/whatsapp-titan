@@ -734,143 +734,161 @@ document.addEventListener('DOMContentLoaded', () => {
         })
     }
 
-    // --- IPC LISTENERS ---
-    window.api.onQr(({ number }) => { if (accounts.has(number)) { accounts.get(number).state = STATES.LOGGING_IN; if (activeTab === 'devices') render(); } })
-    window.api.onAccountReady(({ number }) => { if (accounts.has(number)) { accounts.get(number).state = STATES.LOGGED_IN; if (activeTab === 'devices') render(); } })
-    window.api.onAccountRemoved(({ number }) => { accounts.delete(number); if (activeTab === 'devices') render(); })
-    window.api.onAccountExported(({ number }) => { if (accounts.has(number)) { accounts.get(number).state = STATES.EXPORTED; if (activeTab === 'devices') render(); } })
+    // --- TITAN 5-LANE HIGHWAY SYSTEM ---
 
-    // Handler for browser window close / forceful disconnect
-    window.api.onAccountDisconnected(({ number }) => {
-        if (accounts.has(number)) {
-            const acc = accounts.get(number)
-            acc.state = STATES.DISCONNECTED
-            acc.progress = null // Clear progress if any
-            console.log(`[APP] Account ${number} disconnected (Browser Closed)`)
-            if (activeTab === 'devices') render()
-        }
-    })
-
-    window.api.onGroupsReceived(({ number, groups }) => {
-        const acc = accounts.get(number)
-        if (acc) {
-            console.log(`[APP] Discovery Complete for ${number}. Hydrating ${groups?.length || 0} groups.`)
-
-            // Smart Merge: Ensure counts are updated in the final list
-            if (groups) {
-                groups.forEach(g => {
-                    const idx = acc.groups.findIndex(eg => eg.id === g.id)
-                    if (idx !== -1) {
-                        acc.groups[idx].participantCount = g.participantCount
-                        acc.groups[idx].isLimited = g.isLimited
-                    } else {
-                        acc.groups.push(g)
-                    }
-                })
-            }
-
-            acc.state = STATES.GROUPS_READY;
-            acc.discoveryStats = null;
-            if (activeTab === 'devices' || activeTab === 'grabber') render();
-        }
-    })
-
-
-
-    window.api.onGroupsProgress(({ number, groups }) => {
+    // LANE 1: COMMAND (Priority UI State)
+    window.api.onHighwayCommand(({ number, data }) => {
         const acc = accounts.get(number)
         if (!acc) return
-        if (!acc.groups) acc.groups = [];
-
-        if (groups.length === 1 && groups[0].isComplete) {
-            acc.state = STATES.GROUPS_READY
-            acc.discoveryStats = null
-            render()
-            return
-        }
-
-        groups.forEach(g => {
-            const idx = acc.groups.findIndex(eg => eg.id === g.id)
-            if (idx !== -1) {
-                // Update existing with better metadata
-                acc.groups[idx].participantCount = g.participantCount
-                acc.groups[idx].isLimited = g.isLimited
-            } else {
-                // Add new
-                acc.groups.push(g)
+        data.forEach(cmd => {
+            if (cmd.type === 'STATE_SYNC') {
+                acc.selectedGroupIds = new Set(cmd.selected);
             }
         })
+        // TITAN SHIELD: Coalesced render for commands (sync/switch)
+        const now = Date.now();
+        if (activeTab === 'grabber' && activeExtractAccount === number) {
+            if (!acc._lastCmdRender || (now - acc._lastCmdRender > 100)) {
+                acc._lastCmdRender = now;
+                render();
+            }
+        }
+    })
 
+    // LANE 2: TURBO (Massive Contact Stream)
+    window.api.onHighwayTurbo(({ number, contacts }) => {
+        const acc = accounts.get(number)
+        if (!acc) return
+        if (!acc.contacts) acc.contacts = []
+        // TITAN SCALE: Use loop instead of spread to avoid stack overflow on 50k+ contacts
+        for (let i = 0; i < contacts.length; i++) acc.contacts.push(contacts[i]);
+        acc.contactCount = acc.contacts.length
+        acc._lastUpdate = Date.now()
+
+        // TITAN COALESCING: Limit re-renders to max 5 times/sec (200ms) to avoid CPU thrashing
+        const now = Date.now();
+        if (activeTab === 'grabber' && activeExtractAccount === number) {
+            if (!acc._lastHighwayRender || (now - acc._lastHighwayRender > 200)) {
+                acc._lastHighwayRender = now;
+                render();
+            }
+        }
+    })
+
+    // LANE 3: DISCOVERY (Metadata/Groups)
+    window.api.onHighwayDiscovery(({ number, updates }) => {
+        const acc = accounts.get(number)
+        if (!acc) return
+        if (!acc.groups) acc.groups = []
+        // TITAN SCALE: Use Map for O(1) lookups instead of O(n²) findIndex
+        if (!acc._groupMap) {
+            acc._groupMap = new Map();
+            acc.groups.forEach(g => acc._groupMap.set(g.id, g));
+        }
+        updates.forEach(g => {
+            if (acc._groupMap.has(g.id)) {
+                Object.assign(acc._groupMap.get(g.id), g)
+            } else {
+                acc.groups.push(g)
+                acc._groupMap.set(g.id, g)
+            }
+        })
         acc.discoveryStats = { done: acc.groups.length, loading: true }
-
-        // TITAN OPTIMIZATION: Instant Render (No Framing Lag)
-        if ((activeTab === 'grabber' && activeExtractAccount === number) || activeTab === 'devices') {
-            render()
-        }
+        if (activeExtractAccount === number) render()
     })
 
-    // PIPELINE B: Metadata Updates (Progressive Count Filling)
-    window.api.onMetadataProgress(({ number, groupId, participantCount, isDecrypting }) => {
+    // LANE 4: PULSE (Telemetry)
+    window.api.onHighwayPulse(({ number, stats }) => {
         const acc = accounts.get(number)
-        if (!acc || !acc.groups) return
-
-        const group = acc.groups.find(g => g.id === groupId)
-        if (group) {
-            group.participantCount = participantCount
-            group.isDecrypting = isDecrypting
-
-            // Only re-render if viewing this account
-            if ((activeTab === 'grabber' && activeExtractAccount === number) || activeTab === 'devices') {
-                render()
-            }
-        }
+        if (!acc) return
+        acc.progress = stats
+        acc.state = STATES.EXTRACTING
+        if (activeExtractAccount === number) render()
     })
 
-    window.api.onExtractionStart(({ number }) => {
+    // LANE 5: SYSTEM (Lifecycle & Health)
+    window.api.onHighwaySystem(({ number, events }) => {
         const acc = accounts.get(number)
-        if (acc) {
-            acc.state = STATES.EXTRACTING
-            acc.progress = { groupIndex: 0, groupTotal: 0 }
-            // TITAN UX: We don't clear the list immediately to avoid a blank screen,
-            // but we ensure the 'Extracting' status is visible.
-            render()
-        }
-    })
-
-    window.api.onExtractionProgress(({ number, contacts, progress }) => {
-        const acc = accounts.get(number)
-        if (acc) {
-            // TITAN REAL-TIME: Append new contacts + Force Render
-            if (contacts && contacts.length > 0) {
-                if (!acc.contacts) acc.contacts = []
-                acc.contacts.push(...contacts)
-                acc.contactCount = acc.contacts.length
-
-                // Force memoization reset
-                acc._lastUpdate = Date.now()
+        if (!acc) return
+        events.forEach(ev => {
+            if (ev.type === 'QR') { acc.state = STATES.LOGGING_IN; acc.qr = ev.qr; }
+            if (ev.type === 'READY') { acc.state = STATES.LOGGED_IN; }
+            if (ev.type === 'ERROR') { acc.state = STATES.ERROR; acc.error = ev.error; }
+            if (ev.type === 'DISCONNECTED') { acc.state = STATES.DISCONNECTED; }
+            if (ev.type === 'EXTRACTION_COMPLETE') {
+                acc.state = STATES.EXTRACTION_DONE;
+                acc.contacts = ev.contacts;
+                acc.contactCount = ev.contacts.length;
             }
-
-            acc.progress = progress
-            acc.state = STATES.EXTRACTING
-
-            if (activeTab === 'devices' || (activeTab === 'grabber' && activeExtractAccount === number)) {
-                render()
+            if (ev.type === 'METADATA_COMPLETE' || ev.type === 'DISCOVERY_COMPLETE') {
+                acc.state = STATES.GROUPS_READY;
+                acc.discoveryStats = null;
             }
-        }
+            if (ev.type === 'STATE_RESET') {
+                acc.selectedGroupIds = new Set();
+                acc.contacts = [];
+                acc.contactCount = 0;
+            }
+            if (ev.type === 'MESSAGE_RECEIVED') {
+                console.log('[APP] 📊 Highway: Message Received', ev)
+                _recentMessages.unshift({
+                    from: ev.from,
+                    body: ev.body,
+                    timestamp: new Date().toLocaleTimeString(),
+                    number: ev.number
+                })
+                if (_recentMessages.length > 20) _recentMessages.pop()
+                if (activeTab === 'reports' || activeTab === 'autoreply') render()
+            }
+            if (ev.type === 'BOT_ACTIVITY') {
+                _botActivity.push(ev)
+                if (_botActivity.length > 50) _botActivity.shift()
+
+                const action = ev.action.toUpperCase();
+                let color = '#3b82f6';
+                let icon = '🤖';
+
+                if (action === 'MATCHING' || action === 'MATCH') { color = '#3b82f6'; icon = '🎯'; }
+                if (action === 'OPERATOR_STOP') { color = '#ef4444'; icon = '🛡️'; }
+                if (action === 'OPERATOR_RESUME') { color = '#10b981'; icon = '♻️'; }
+                if (action === 'SENT') { color = '#10b981'; icon = '✅'; }
+                if (action === 'ERROR') { color = '#ef4444'; icon = '❌'; }
+                if (action === 'BOT_SENT') { color = '#3b82f6'; icon = '🤖'; }
+
+                if (action === 'CONVERSION') {
+                    color = '#fbbf24'; icon = '🏆';
+                    _campaignStats.totalReceived++
+                    window.api.configSave({ campaignStats: _campaignStats })
+                    if (activeTab === 'reports') render()
+                }
+
+                const feed = document.getElementById('guardian-log-container')
+                if (feed) {
+                    const item = document.createElement('div')
+                    item.style.marginBottom = '12px'
+                    item.style.display = 'flex'
+                    item.style.gap = '16px'
+                    item.style.borderBottom = '1px solid rgba(255,255,255,0.03)'
+                    item.style.paddingBottom = '10px'
+                    item.innerHTML = `
+                        <span style="color:#475569; min-width:85px; font-size:10px;">[${ev.time}]</span>
+                        <div style="flex:1;">
+                            <div style="display:flex; align-items:center; gap:8px; margin-bottom:4px;">
+                                <span style="font-size:12px;">${icon}</span>
+                                <span style="font-weight:800; font-size:11px; color:${color}; text-transform:uppercase;">${action}</span>
+                                <span style="color:#475569; margin:0 8px;">❯</span>
+                                <span style="color:#fff; opacity:0.85; font-size:11px;">${ev.details}</span>
+                            </div>
+                        </div>`
+                    feed.prepend(item)
+                    if (feed.children.length > 50) feed.lastElementChild.remove()
+                }
+            }
+        })
+        render()
     })
 })
 
-window.api.onExtractionComplete(({ number, contacts }) => {
-    const acc = accounts.get(number)
-    if (acc) {
-        acc.contacts = contacts
-        acc.state = STATES.EXTRACTION_DONE
-        acc._lastUpdate = Date.now() // Force filter cache refresh
-        if (activeTab === 'devices' || (activeTab === 'grabber' && activeExtractAccount === number)) {
-            render()
-        }
-    }
-})
 
 window.api.onAccountExported(({ number, path, count }) => {
     window.showTitanBanner(`Export Successful: ${count} contacts saved for +${number}`, 'success')
@@ -920,36 +938,7 @@ window.api.onExclusionDone(({ number, excludedArray }) => {
     }
 })
 
-window.api.onMessageReceived((data) => {
-    console.log('[APP] 📊 Analytics: Message Received', data)
-    // TITAN: Do NOT increment global here. We aggregate dynamically now.
-    // _campaignStats.totalReceived++
 
-    _recentMessages.unshift({
-        from: data.from,
-        body: data.body,
-        timestamp: new Date().toLocaleTimeString(),
-        number: data.number
-    })
-    if (_recentMessages.length > 20) _recentMessages.pop()
-
-    window.api.configSave({ campaignStats: _campaignStats })
-
-    // PROTECTION: Don't re-render the whole tab if the user is currently typing a rule
-    const focused = document.activeElement;
-    const isEditingRule = focused && (focused.classList.contains('rule-keyword-input') || focused.classList.contains('rule-response-textarea'));
-
-    if (activeTab === 'reports') render()
-    if (activeTab === 'autoreply' && !isEditingRule) render()
-
-    // If editing, just update the live feed container manually without full render
-    if (activeTab === 'autoreply' && isEditingRule) {
-        const feed = document.querySelector('#live-activity-feed');
-        if (feed) {
-            // Silently update just the feed content if possible, or just wait for next manual render
-        }
-    }
-})
 
 window.api.onAccountError(({ number, error }) => {
     const acc = accounts.get(number)
@@ -1002,9 +991,10 @@ async function syncAccountsWithBackend() {
             // Full hydration now only happens via 'account:data' when actively viewed.
             const isSelfReady = acc.number === activeExtractAccount && activeTab === 'grabber'
 
-            if (isSelfReady && acc.groups.length === 0 && acc.groupCount > 0 && !acc._isHydrating) {
-                hydrateAccountData(acc.number)
-            }
+            // TITAN MEMORY OPTIMIZATION: Disable automatic hydration on switch. User must click Sync.
+            // if (isSelfReady && acc.groups.length === 0 && acc.groupCount > 0 && !acc._isHydrating) {
+            //     hydrateAccountData(acc.number)
+            // }
 
             if (ba.extracting && acc.state !== STATES.EXTRACTING) acc.state = STATES.EXTRACTING
 
@@ -1398,6 +1388,12 @@ function setupExtractListeners(container) {
             if (acc) {
                 acc.state = STATES.GETTING_GROUPS;
                 acc.discoveryStats = { loading: true, count: acc.groups?.length || 0 };
+
+                // TITAN: On sync, force the 'Select All' box to uncheck if it was stuck
+                const box = container.querySelector('#select-all-groups');
+                if (box) box.checked = false;
+                if (acc.selectedGroupIds) acc.selectedGroupIds.clear();
+
                 render();
                 window.api.getGroups(acc.number);
             }
@@ -1408,13 +1404,53 @@ function setupExtractListeners(container) {
         card.addEventListener('click', () => {
             const number = card.dataset.number
             if (activeExtractAccount === number) return
+
+            // TITAN CLEAN SLATE: Wipe previous account's UI memory to prevent RAM bloat/freezes
+            if (activeExtractAccount && accounts.has(activeExtractAccount)) {
+                const prev = accounts.get(activeExtractAccount);
+                if (prev) {
+                    prev.groups = [];
+                    prev.contacts = [];
+                    prev._groupMap = null;
+                    prev._filteredCache = [];
+                    prev._groupFilterCache = [];
+                    prev.contactCount = 0;
+                    prev.groupCount = 0;
+                    prev.discoveryStats = null;
+                    if (prev.selectedGroupIds) prev.selectedGroupIds.clear();
+                }
+            }
+
             activeExtractAccount = number
+            window.api.setActiveAccount(number) // Force the pipeline to swap
+
+            // TITAN CLEAN SLATE: Wipe the new account's local state too.
+            // This forces the user to click "Sync" for a fresh, crash-free experience.
+            const current = accounts.get(number);
+            if (current) {
+                current.groups = [];
+                current.contacts = [];
+                current._groupMap = null;
+                current._filteredCache = [];
+                current._groupFilterCache = [];
+                current.contactCount = 0;
+                current.groupCount = 0;
+                current.discoveryStats = null;
+                if (current.selectedGroupIds) current.selectedGroupIds.clear();
+                current.state = STATES.LOGGED_IN;
+            }
+
+            // Force panels to rebuild for the new account context
+            const lpNode = document.getElementById('lp-node');
+            if (lpNode) delete lpNode.dataset.boundAcc;
+            const rpNode = document.getElementById('rp-node');
+            if (rpNode) delete rpNode.dataset.boundAcc;
+
             render()
         })
     })
 
-    const currentAcc = accounts.get(activeExtractAccount)
-    if (currentAcc) setupWorkspaceListeners(container, currentAcc)
+    // setupWorkspaceListeners(container, currentAcc) // REMOVED: Redundant, panels setup themselves during render
 }
 
 function renderWorkspace(container, acc, token) {
@@ -1438,6 +1474,9 @@ function renderWorkspace(container, acc, token) {
 
     renderGroupsPanel(lp, acc, token)
     renderContactsPanel(rp, acc, token)
+
+    // Ensure listeners are bound to the (potentially) new DOM nodes/account context
+    setupWorkspaceListeners(container, acc)
 }
 
 function setupWorkspaceListeners(container, acc) {
@@ -1467,6 +1506,16 @@ function setupGroupsPanelListeners(container, acc) {
     if (selectAll) {
         selectAll.onchange = e => {
             const freshAcc = accounts.get(acc.number) || acc
+
+            // TITAN VALIDATION: Block Select All if no groups have been synced yet
+            if (!freshAcc.groups || freshAcc.groups.length === 0) {
+                e.target.checked = false;
+                // TITAN: Ensure backend selection is also killed
+                window.api.selectAllGroups(freshAcc.number, false);
+                window.titanAlert('Sync Required', 'Please click on ↻ Sync Active first to load your groups.');
+                return;
+            }
+
             if (!freshAcc.selectedGroupIds) freshAcc.selectedGroupIds = new Set()
 
             const groups = Array.isArray(freshAcc.groups) ? freshAcc.groups : []
@@ -1487,11 +1536,13 @@ function setupGroupsPanelListeners(container, acc) {
                     if (g && g.id) freshAcc.selectedGroupIds.add(g.id);
                 }
             } else {
-                for (let i = 0; i < filtered.length; i++) {
-                    const g = filtered[i];
-                    if (g && g.id) freshAcc.selectedGroupIds.delete(g.id);
-                }
+                freshAcc.selectedGroupIds.clear();
             }
+            // Reset "Done" state so user can re-extract
+            if (freshAcc.state === STATES.EXTRACTION_DONE) {
+                freshAcc.state = STATES.GROUPS_READY;
+            }
+            window.api.selectAllGroups(freshAcc.number, e.target.checked);
             render()
         }
     }
@@ -1499,6 +1550,13 @@ function setupGroupsPanelListeners(container, acc) {
         startBtn.onclick = async () => {
             const freshAcc = accounts.get(acc.number) || acc
             if (!freshAcc.selectedGroupIds) freshAcc.selectedGroupIds = new Set()
+
+            // TITAN SAFETY: Prune stale selections that reference groups no longer in the list
+            const validIds = new Set((freshAcc.groups || []).map(g => g.id));
+            for (const id of freshAcc.selectedGroupIds) {
+                if (!validIds.has(id)) freshAcc.selectedGroupIds.delete(id);
+            }
+
             if (freshAcc.selectedGroupIds.size === 0) return window.titanAlert('Selection Required', 'Select at least one group first.')
 
             // --- STRICT FLOW: BLOCK IF DATA EXISTS ---
@@ -1535,9 +1593,14 @@ function setupContactsPanelListeners(container, acc) {
     const exclusionBtn = container.querySelector('#import-exclusion-btn')
 
     if (search) {
+        // TITAN DEBOUNCE: Wait 300ms after last keystroke before searching 400k contacts
+        let searchTimeout;
         search.oninput = e => {
-            acc.searchQuery = e.target.value
-            render()
+            clearTimeout(searchTimeout);
+            searchTimeout = setTimeout(() => {
+                acc.searchQuery = e.target.value
+                render()
+            }, 300);
         }
     }
 
@@ -1595,10 +1658,21 @@ function renderGroupsPanel(container, acc, token) {
     container.querySelector('#sync-status').style.display = isSyncing ? 'block' : 'none'
 
     const extBtn = container.querySelector('#start-extract-btn')
-    const selCount = acc.selectedGroupIds.size
-    extBtn.innerText = isExt
-        ? `Extracting... (${prog?.groupIndex || 0}/${prog?.groupTotal || 0})`
-        : selCount > 0 ? `Extract ${selCount} Group${selCount > 1 ? 's' : ''}` : 'Select Groups to Extract'
+    const isDone = acc.state === STATES.EXTRACTION_DONE
+    const selCount = acc.selectedGroupIds.size;
+
+    if (isExt) {
+        const current = prog?.groupIndex ?? 0
+        const total = prog?.groupTotal ?? 0
+        extBtn.innerText = `Extracting... (${current}/${total})`
+        extBtn.classList.add('extracting-pulse')
+    } else if (isDone) {
+        extBtn.innerText = 'Extraction Complete ✅'
+        extBtn.classList.remove('extracting-pulse')
+    } else {
+        extBtn.innerText = selCount > 0 ? `Extract ${selCount} Group${selCount > 1 ? 's' : ''}` : 'Select Groups to Extract'
+        extBtn.classList.remove('extracting-pulse')
+    }
     extBtn.style.fontSize = '14px'
     extBtn.style.fontWeight = '800'
     extBtn.disabled = isExt
@@ -1655,8 +1729,15 @@ function renderGroupsPanel(container, acc, token) {
             `
             row.onclick = () => {
                 const freshAcc = accounts.get(acc.number) || acc
-                if (freshAcc.selectedGroupIds.has(g.id)) freshAcc.selectedGroupIds.delete(g.id)
-                else freshAcc.selectedGroupIds.add(g.id)
+                const isSelected = !freshAcc.selectedGroupIds.has(g.id)
+                if (isSelected) freshAcc.selectedGroupIds.add(g.id)
+                else freshAcc.selectedGroupIds.delete(g.id)
+
+                if (freshAcc.state === STATES.EXTRACTION_DONE) {
+                    freshAcc.state = STATES.GROUPS_READY;
+                }
+
+                window.api.toggleGroupSelection(freshAcc.number, g.id, isSelected)
                 render()
             }
             fragment.appendChild(row)
@@ -1842,8 +1923,30 @@ function renderContactsPanel(container, acc, token) {
 
         // TITAN SHIELD: Robust Event Delegation for Tools & Export
         div.addEventListener('click', async (e) => {
-            // TITAN SAFETY: Always fetch fresh state to avoid operations on stale objects
             const freshAcc = accounts.get(acc.number) || acc
+
+            // TITAN OPTIMIZATION: Checkbox special handling for O(1) Deselect
+            if (e.target.id === 'select-all-contacts') {
+                if (!freshAcc.selectedContactIds) freshAcc.selectedContactIds = new Set();
+                const isChecked = e.target.checked;
+
+                if (!isChecked) {
+                    // O(1) Nuclear Clear - Instant even for 400k
+                    freshAcc.selectedContactIds.clear();
+                } else {
+                    // O(N) but chunked to prevent freeze
+                    const filtered = freshAcc._filteredCache || []
+                    const batchSize = 10000;
+                    for (let i = 0; i < filtered.length; i++) {
+                        const c = filtered[i];
+                        freshAcc.selectedContactIds.add(`${c.phone}|${c.sourceGroupId}`);
+                        // Yield to UI thread every 10k items
+                        if (i % batchSize === 0 && i > 0) await new Promise(r => setTimeout(r, 0));
+                    }
+                }
+                render();
+                return;
+            }
 
             const btn = e.target.closest('button')
             if (!btn || !btn.id) return
@@ -1866,39 +1969,30 @@ function renderContactsPanel(container, acc, token) {
             }
 
             if (btn.id === 'clear-contacts-btn') {
-                if (await titanConfirm('Clear All Data', 'Wipe all discovered groups and extracted contacts for this account?')) {
-                    // TITAN NUCLEAR CLEAR: In-place array wipe + Direct DOM Manipulation
-                    if (freshAcc.contacts && Array.isArray(freshAcc.contacts)) freshAcc.contacts.length = 0;
-                    if (freshAcc.groups && Array.isArray(freshAcc.groups)) freshAcc.groups.length = 0;
-
+                if (await titanConfirm('Clear Extracted Data', 'Wipe all extracted contacts? Your discovered groups will stay visible.')) {
+                    // TITAN CLEAN RESET: Wipe contacts, keep groups
                     freshAcc.contacts = []
-                    freshAcc.groups = []
+                    // freshAcc.groups stays unchanged
                     freshAcc.contactCount = 0
-                    freshAcc.groupCount = 0
                     freshAcc.searchQuery = ''
                     freshAcc._lastUpdate = Date.now()
                     freshAcc._lastFilterKey = null
                     freshAcc._filteredCache = []
-                    freshAcc._lastGroupFilterKey = null
-                    freshAcc._groupFilterCache = []
+                    freshAcc._lastStatsKey = null
+                    freshAcc._cachedStats = { total: 0, admins: 0, groups: 0 }
+
+                    // Keep the state as GROUPS_READY so the UI doesn't think we need a new sync
+                    if (freshAcc.groups && freshAcc.groups.length > 0) {
+                        freshAcc.state = STATES.GROUPS_READY
+                    } else {
+                        freshAcc.state = STATES.LOGGED_IN
+                    }
 
                     if (freshAcc.selectedContactIds) freshAcc.selectedContactIds.clear()
-                    if (freshAcc.selectedGroupIds) freshAcc.selectedGroupIds.clear()
 
-                    // FORCE DOM INPUT RESET
-                    const searchInput = document.getElementById('contact-search');
-                    if (searchInput) searchInput.value = '';
-
-                    // NUCLEAR DOM WIPE (Bypass React Scheduler)
-                    const tbody = document.getElementById('contacts-table-body');
-                    if (tbody) tbody.innerHTML = '';
-
-                    const countEl = document.getElementById('total-contacts-count');
-                    if (countEl) countEl.innerText = '0';
-
-                    // TITAN RENDER RESET: Force scroll reset on next render
+                    // Force ONLY the right panel to rebuild (contacts list)
                     const rpNode = document.getElementById('rp-node');
-                    if (rpNode) delete rpNode.dataset.scrollReset;
+                    if (rpNode) delete rpNode.dataset.boundAcc;
 
                     window.api.clearAllData(freshAcc.number)
                     render()
@@ -1990,18 +2084,27 @@ function renderContactsPanel(container, acc, token) {
     const countLabel = container.querySelector('#contact-count-label')
     if (countLabel) countLabel.innerText = `${allContacts.length.toLocaleString()} contacts`
 
-    // --- TITAN OPTIMIZATION: Throttled Stats ---
-    // Recalculate only if state changed + Throttled during extraction to save CPU
+    // --- TITAN OPTIMIZATION: High-Speed Stats Pass ---
     const statsKey = `${allContacts.length}|${acc._lastUpdate || 0}`
     const isExtracting = acc.state === STATES.EXTRACTING;
-    const statsThrottleMs = isExtracting ? 3000 : 0; // 3s throttle during extraction
+    const statsThrottleMs = isExtracting ? 3000 : 500;
     const now = Date.now();
 
     if (acc._lastStatsKey !== statsKey && (now - (acc._lastStatsTime || 0)) > statsThrottleMs) {
+        // TITAN TURBO LOOP: One pass over 400k contacts instead of 4 passes.
+        // Avoids memory allocation of intermediate arrays (map/filter) which causes GC freeze.
+        let adminCount = 0;
+        const groupSet = new Set();
+        for (let i = 0; i < allContacts.length; i++) {
+            const c = allContacts[i];
+            if (c.isAdmin) adminCount++;
+            if (c.sourceGroupId) groupSet.add(c.sourceGroupId);
+        }
+
         acc._cachedStats = {
             total: allContacts.length,
-            admins: allContacts.filter(c => c.isAdmin).length,
-            groups: new Set(allContacts.map(c => c.sourceGroupId).filter(Boolean)).size
+            admins: adminCount,
+            groups: groupSet.size
         }
         acc._lastStatsKey = statsKey
         acc._lastStatsTime = now
@@ -4374,60 +4477,9 @@ window.api.onNetworkRestored(() => {
     }
 })
 
-window.api.onBotActivity((data) => {
-    const action = data.action.toUpperCase();
 
-    // NOISE FILTER: Only show client conversions and manual takeovers
-    const significantActions = ['CONVERSION', 'OPERATOR_STOP'];
-    if (!significantActions.includes(action)) return;
 
-    _botActivity.push(data)
-    if (_botActivity.length > 50) _botActivity.shift()
 
-    const container = document.getElementById('guardian-log-container')
-    if (container) {
-        let color = '#3b82f6';
-        let icon = '🤖';
-
-        if (action === 'MATCHING' || action === 'MATCH') { color = '#3b82f6'; icon = '🎯'; }
-        if (action === 'OPERATOR_STOP') { color = '#ef4444'; icon = '🛡️'; }
-        if (action === 'OPERATOR_RESUME') { color = '#10b981'; icon = '♻️'; }
-        if (action === 'SENT') { color = '#10b981'; icon = '✅'; }
-        if (action === 'ERROR') { color = '#ef4444'; icon = '❌'; }
-        if (action === 'BOT_SENT') { color = '#3b82f6'; icon = '🤖'; }
-
-        // TITAN ANALYTICS: Count unique conversions only
-        if (action === 'CONVERSION') {
-            color = '#fbbf24'; icon = '🏆';
-            _campaignStats.totalReceived++
-            window.api.configSave({ campaignStats: _campaignStats })
-            if (activeTab === 'reports') render()
-        }
-
-        const item = document.createElement('div')
-        item.style.marginBottom = '12px'
-        item.style.display = 'flex'
-        item.style.gap = '16px'
-        item.style.borderBottom = '1px solid rgba(255,255,255,0.03)'
-        item.style.paddingBottom = '10px'
-        item.innerHTML = `
-    <span style = "color:#475569; min-width:85px; font-size:10px;" > [${data.time}]</span >
-            <span style="color:${color}; font-weight:800; min-width:90px; display:flex; align-items:center; gap:6px; font-size:10px; text-transform:uppercase;">${icon} ${action}</span>
-            <div style="flex:1; overflow:hidden; text-overflow:ellipsis;">
-                <span style="color:#e2e8f0; font-weight:bold; font-size:11px;">${data.lead}</span>
-                <span style="color:#475569; margin:0 8px;">❯</span>
-                <span style="color:#fff; opacity:0.85; font-size:11px;">${data.details}</span>
-            </div>
-`
-        container.prepend(item)
-        if (container.children.length > 50) container.lastElementChild.remove()
-    }
-})
-
-window.api.onMessageReceived((data) => {
-    // Only log, do not increment analytics (Unique Conversions handled by Bot Activity)
-    // console.log('[UI] Message:', data.body)
-})
 
 // 🚀 TITAN: CAMPAIGN STATUS & DELAY HANDLER (MULTI-INSTANCE)
 // 🚀 TITAN: CAMPAIGN STATUS & DELAY HANDLER (MULTI-INSTANCE)

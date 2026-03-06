@@ -1,240 +1,140 @@
-const EventEmitter = require('events');
-const fs = require('fs');
-const path = require('path');
-const xlsx = require('xlsx');
+const EventEmitter = require('events')
+const fs = require('fs')
+const path = require('path')
 
-/**
- * CampaignManager handles the lifecycle of outreach campaigns.
- * It manages lead distribution, message variants, and progress tracking.
- */
 class CampaignManager extends EventEmitter {
     constructor({ registry, logsDir }) {
-        super();
-        this.registry = registry;
-        this.logsDir = logsDir;
-        this.campaignsDir = path.join(this.logsDir, 'campaigns');
-        this.activeQueues = new Map();
+        super()
+        this.registry = registry
+        this.logsDir = logsDir
+        this.campaignsDir = path.join(this.logsDir, 'campaigns')
+        this.activeQueues = new Map()
 
         if (!fs.existsSync(this.campaignsDir)) {
-            fs.mkdirSync(this.campaignsDir, { recursive: true });
+            fs.mkdirSync(this.campaignsDir, { recursive: true })
         }
     }
 
-    /**
-     * Initializes a new campaign folder, distributes leads to accounts, and saves initial state.
-     */
-    async createCampaign(leads, assignments, variants = []) {
-        const campaignId = 'campaign_' + Date.now();
-        const campaignPath = path.join(this.campaignsDir, campaignId);
+    async createCampaign(leads, mapping, variants = []) {
+        const campaignId = `campaign_${Date.now()}`
+        const campaignPath = path.join(this.campaignsDir, campaignId)
+        fs.mkdirSync(campaignPath, { recursive: true })
 
-        fs.mkdirSync(campaignPath, { recursive: true });
-        console.log(`[CAMPAIGN] Creating ${campaignId} with ${leads.length} leads`);
+        console.log(`[CAMPAIGN] Creating ${campaignId} with ${leads.length} leads`)
 
-        const assignmentMap = {};
-        const variantStats = variants.map(text => ({
-            text: text,
-            sent: 0,
-            replied: 0
-        }));
+        const assignments = {}
+        const variantStats = variants.map(v => ({ text: v, sent: 0, replied: 0 }))
 
-        for (const assignment of assignments) {
-            const accountLeads = assignment.indices
-                .map(index => leads[index])
-                .filter(lead => lead !== undefined);
+        for (const map of mapping) {
+            const segment = map.indices.map(idx => leads[idx]).filter(l => l !== undefined)
+            if (segment.length === 0) continue
 
-            if (accountLeads.length === 0) continue;
-
-            const queueFile = path.join(campaignPath, `queue_${assignment.number}.json`);
+            const queueFile = path.join(campaignPath, `queue_${map.number}.json`)
             const queueData = {
-                campaignId: campaignId,
-                number: assignment.number,
-                total: accountLeads.length,
-                matrix: assignment.indices,
+                campaignId,
+                number: map.number,
+                total: segment.length,
+                matrix: map.indices,
                 sent: 0,
                 failed: 0,
                 replied: 0,
                 status: 'PENDING',
-                contacts: accountLeads
-            };
-
-            fs.writeFileSync(queueFile, JSON.stringify(queueData, null, 2));
-            assignmentMap[assignment.number] = queueFile;
+                contacts: segment
+            }
+            fs.writeFileSync(queueFile, JSON.stringify(queueData, null, 2))
+            assignments[map.number] = queueFile
         }
 
         const campaignState = {
             id: campaignId,
             timestamp: Date.now(),
             totalLeads: leads.length,
-            assignments: assignmentMap,
-            variants: variants,
-            variantStats: variantStats,
+            assignments,
+            variants,
+            variantStats,
             status: 'INITIALIZED'
-        };
-
-        fs.writeFileSync(path.join(campaignPath, 'state.json'), JSON.stringify(campaignState, null, 2));
-
-        return campaignId;
-    }
-
-    /**
-     * Retrieves the high-level state of a campaign.
-     */
-    getCampaignState(campaignId) {
-        const stateFile = path.join(this.campaignsDir, campaignId, 'state.json');
-        if (!fs.existsSync(stateFile)) return null;
-
-        try {
-            return JSON.parse(fs.readFileSync(stateFile, 'utf8'));
-        } catch (err) {
-            console.error(`[CAMPAIGN] Error reading state for ${campaignId}:`, err.message);
-            return null;
         }
+        fs.writeFileSync(path.join(campaignPath, 'state.json'), JSON.stringify(campaignState, null, 2))
+        return campaignId
     }
 
-    /**
-     * Retrieves the specific lead queue for an account within a campaign.
-     */
+    getCampaignStatus(campaignId) {
+        const campaignPath = path.join(this.campaignsDir, campaignId)
+        if (!fs.existsSync(campaignPath)) return null
+        return JSON.parse(fs.readFileSync(path.join(campaignPath, 'state.json'), 'utf8'))
+    }
+
     getQueue(campaignId, number) {
-        const queueFile = path.join(this.campaignsDir, campaignId, `queue_${number}.json`);
-        if (!fs.existsSync(queueFile)) return null;
-
-        try {
-            return JSON.parse(fs.readFileSync(queueFile, 'utf8'));
-        } catch (err) {
-            console.error(`[CAMPAIGN] Error reading queue ${number} for ${campaignId}:`, err.message);
-            return null;
-        }
+        const queueFile = path.join(this.campaignsDir, campaignId, `queue_${number}.json`)
+        if (!fs.existsSync(queueFile)) return null
+        return JSON.parse(fs.readFileSync(queueFile, 'utf8'))
     }
 
-    /**
-     * Updates the progress of a specific account's queue and persists it.
-     */
     updateQueueProgress(campaignId, number, updates) {
-        const queueFile = path.join(this.campaignsDir, campaignId, `queue_${number}.json`);
-        if (!fs.existsSync(queueFile)) return;
+        const queueFile = path.join(this.campaignsDir, campaignId, `queue_${number}.json`)
+        if (!fs.existsSync(queueFile)) return
+        const data = JSON.parse(fs.readFileSync(queueFile, 'utf8'))
+        const newData = { ...data, ...updates }
+        fs.writeFileSync(queueFile, JSON.stringify(newData, null, 2))
+        this.emit('queue:progress', { campaignId, number, ...updates })
+    }
 
-        try {
-            const queue = JSON.parse(fs.readFileSync(queueFile, 'utf8'));
-            const updatedQueue = { ...queue, ...updates };
-
-            fs.writeFileSync(queueFile, JSON.stringify(updatedQueue, null, 2));
-
-            // Notify UI
-            this.emit('queue:progress', {
-                campaignId,
-                number,
-                ...updates
-            });
-        } catch (err) {
-            console.error(`[CAMPAIGN] Failed to update queue progress for ${number}:`, err.message);
+    incrementVariantSent(campaignId, variantIdx) {
+        const stateFile = path.join(this.campaignsDir, campaignId, 'state.json')
+        if (!fs.existsSync(stateFile)) return
+        const state = JSON.parse(fs.readFileSync(stateFile, 'utf8'))
+        if (state.variantStats && state.variantStats[variantIdx]) {
+            state.variantStats[variantIdx].sent++
+            fs.writeFileSync(stateFile, JSON.stringify(state, null, 2))
+            this.emit('campaign:state', { campaignId, state })
         }
     }
 
-    /**
-     * Tracks message sending per variant for analytics.
-     */
-    incrementVariantSent(campaignId, variantIndex) {
-        const stateFile = path.join(this.campaignsDir, campaignId, 'state.json');
-        if (!fs.existsSync(stateFile)) return;
-
-        try {
-            const state = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
-            if (state.variantStats && state.variantStats[variantIndex]) {
-                state.variantStats[variantIndex].sent++;
-                fs.writeFileSync(stateFile, JSON.stringify(state, null, 2));
-
-                this.emit('campaign:state', {
-                    campaignId,
-                    state: state
-                });
-            }
-        } catch (err) {
-            console.error(`[CAMPAIGN] Failed to increment variant stats:`, err.message);
+    incrementVariantReply(campaignId, variantIdx, workerNumber) {
+        const stateFile = path.join(this.campaignsDir, campaignId, 'state.json')
+        if (!fs.existsSync(stateFile)) return
+        const state = JSON.parse(fs.readFileSync(stateFile, 'utf8'))
+        if (state.variantStats && state.variantStats[variantIdx]) {
+            state.variantStats[variantIdx].replied++
+            fs.writeFileSync(stateFile, JSON.stringify(state, null, 2))
+            this.emit('campaign:state', { campaignId, state })
         }
-    }
-
-    /**
-     * Increments reply count for a variant and the specific account queue.
-     */
-    incrementVariantReplied(campaignId, variantIndex, number) {
-        // Update global campaign variant stats
-        const stateFile = path.join(this.campaignsDir, campaignId, 'state.json');
-        if (fs.existsSync(stateFile)) {
-            try {
-                const state = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
-                if (state.variantStats && state.variantStats[variantIndex]) {
-                    state.variantStats[variantIndex].replied++;
-                    fs.writeFileSync(stateFile, JSON.stringify(state, null, 2));
-                    this.emit('campaign:state', { campaignId, state: state });
-                }
-            } catch (err) { }
-        }
-
-        // Update specific account queue stats
-        const queueFile = path.join(this.campaignsDir, campaignId, `queue_${number}.json`);
+        const queueFile = path.join(this.campaignsDir, campaignId, `queue_${workerNumber}.json`)
         if (fs.existsSync(queueFile)) {
-            try {
-                const queue = JSON.parse(fs.readFileSync(queueFile, 'utf8'));
-                queue.replied = (queue.replied || 0) + 1;
-                fs.writeFileSync(queueFile, JSON.stringify(queue, null, 2));
-
-                this.emit('queue:progress', {
-                    campaignId,
-                    number,
-                    replied: queue.replied
-                });
-            } catch (err) { }
+            const queue = JSON.parse(fs.readFileSync(queueFile, 'utf8'))
+            queue.replied = (queue.replied || 0) + 1
+            fs.writeFileSync(queueFile, JSON.stringify(queue, null, 2))
+            this.emit('queue:progress', { campaignId, number: workerNumber, replied: queue.replied })
         }
     }
 
-    /**
-     * Parses an Excel file into a standard list of Lead objects.
-     */
-    async importLeadsFromFile(filePath) {
-        const workbook = xlsx.readFile(filePath);
-        const firstSheetName = workbook.SheetNames[0];
-        const sheet = workbook.Sheets[firstSheetName];
-        const rawJson = xlsx.utils.sheet_to_json(sheet);
-        const leads = [];
-
-        rawJson.forEach(row => {
-            let phone = '';
-            let name = '';
-
-            // Heuristic detection of phone/name columns
-            Object.entries(row).forEach(([colName, cellValue]) => {
-                const key = colName.toLowerCase().replace(/\s/g, '');
-                const val = String(cellValue).trim();
-
+    async parseLeadsFile(filePath) {
+        const XLSX = require('xlsx')
+        const workbook = XLSX.readFile(filePath)
+        const sheet = workbook.Sheets[workbook.SheetNames[0]]
+        const rows = XLSX.utils.sheet_to_json(sheet)
+        const leads = []
+        rows.forEach(row => {
+            let phone = ''; let name = ''
+            Object.entries(row).forEach(([k, v]) => {
+                const key = k.toLowerCase().trim(); const val = String(v).trim()
                 if (key.includes('phone') || key.includes('number') || key.includes('mobile') || key.includes('contact')) {
-                    const digits = val.replace(/\D/g, '');
-                    if (digits.length >= 8) phone = digits;
+                    const clean = val.replace(/\D/g, '')
+                    if (clean.length >= 8) phone = clean
                 } else if (key.includes('name') || key.includes('lead') || key.includes('contact')) {
-                    if (val && val.length > 1) name = val;
+                    if (val && val.length > 1) name = val
                 }
-            });
-
-            // Second pass for phone if not found (look for anything that looks like a number)
+            })
             if (!phone) {
-                Object.values(row).forEach(val => {
-                    const digits = String(val).replace(/\D/g, '');
-                    if (digits.length >= 8 && digits.length <= 15) {
-                        phone = digits;
-                    }
-                });
+                Object.values(row).forEach(v => {
+                    const clean = String(v).replace(/\D/g, '')
+                    if (clean.length >= 8 && clean.length <= 13) phone = clean
+                })
             }
-
-            if (phone) {
-                leads.push({
-                    name: name || '',
-                    phone: phone,
-                    groupSource: 'Excel Import'
-                });
-            }
-        });
-
-        return leads;
+            if (phone) leads.push({ name: name || '', phone, groupSource: 'Excel Import' })
+        })
+        return leads
     }
 }
 
-module.exports = CampaignManager;
+module.exports = CampaignManager
