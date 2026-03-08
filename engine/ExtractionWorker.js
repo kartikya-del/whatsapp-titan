@@ -60,6 +60,7 @@ class ExtractionWorker extends EventEmitter {
             totalGroups: 0
         }
         this._botSentBuffer = new Set()
+        this._lastOutboundPerJid = new Map()
     }
 
     setAutoReplySettings(settings) {
@@ -114,33 +115,62 @@ class ExtractionWorker extends EventEmitter {
                         if (pages.length > 1) {
                             const mainPage = this.client.pupPage || pages.find(p => p.url().includes('web.whatsapp.com')) || pages[0];
                             if (mainPage) {
-                                for (const p of pages) { if (p !== mainPage && !p.isClosed()) await p.close().catch(() => { }); }
+                                for (const p of pages) {
+                                    const url = p.url();
+                                    // SECURITY: Only close if it's NOT the main page, NOT a blank page (still loading), and NOT a login redirect
+                                    if (p !== mainPage && !p.isClosed() && url !== 'about:blank' && !url.includes('google.com/accounts')) {
+                                        await p.close().catch(() => { });
+                                    }
+                                }
                                 try { await mainPage.bringToFront(); } catch (e) { }
                             }
                         }
                     }
                 } catch (e) { }
-            }, 2500);
+            }, 3000);
 
             setTimeout(() => clearInterval(tabGuard), 60000);
 
             const handleIncoming = async (msgData) => {
                 const { from, body, fromMe, timestamp } = msgData;
                 let isBot = false;
-                if (fromMe && this._botSentBuffer.has(body)) {
-                    isBot = true;
-                    this._botSentBuffer.delete(body);
+
+                if (fromMe) {
+                    this._lastOutboundPerJid.set(from, Date.now()); // Mark timestamp of our send
+                    if (this._botSentBuffer.has(body)) {
+                        isBot = true;
+                        this._botSentBuffer.delete(body);
+                    }
+                } else {
+                    // TITAN BOT SENSING: If recipient replies within 7 seconds, it's likely a bot
+                    const lastSentAt = this._lastOutboundPerJid.get(from);
+                    if (lastSentAt && (Date.now() - lastSentAt < 7000)) {
+                        isBot = true;
+                        console.log(`[WORKER-${this.number}] 🤖 Remote Bot Detected (Fast Reply < 7s) from ${from}`);
+                        this.emit('bot_simulation', {
+                            action: 'BOT_DETECTED',
+                            details: `Instant reply (<7s) from ${from} marked as bot. Ignoring auto-reply.`
+                        });
+                    }
                 }
+
                 if (body) {
                     this.emit('message_received', { from, body, fromMe, isBot, number: this.number })
                 }
-                if (fromMe || !this.autoReplySettings.enabled) return
+                if (fromMe) return
                 if (timestamp < this._botStartTime) return
                 if (from && (from.includes('broadcast') || from.includes('status'))) return
             }
 
             this.client.on('message', (msg) => {
-                handleIncoming({ from: msg.from, body: msg.body, fromMe: msg.fromMe, timestamp: msg.timestamp })
+                handleIncoming({ from: msg.from, body: msg.body, fromMe: msg.fromMe, timestamp: msg.timestamp }).catch(() => { })
+            })
+
+            this.client.on('disconnected', (reason) => {
+                console.warn(`[WORKER-${this.number}] DISCONNECTED:`, reason)
+                this.isReady = false
+                this.emit('disconnected')
+                this.close().catch(() => { })
             })
 
             const finalizeAndReady = async () => {
@@ -206,12 +236,31 @@ class ExtractionWorker extends EventEmitter {
                 this.isReady = true; this.emit('ready'); resolve()
             }
 
-            this.client.on('authenticated', () => finalizeAndReady())
+            this.client.on('authenticated', () => finalizeAndReady().catch(() => { }))
             this.client.on('qr', (qr) => this.emit('qr', qr))
-            this.client.on('ready', () => finalizeAndReady())
-            this.client.on('disconnected', () => { this.isReady = false; this.emit('disconnected') })
-            setTimeout(() => { if (!this.isReady) finalizeAndReady() }, 60000)
-            this.client.initialize().catch(reject)
+            this.client.on('ready', () => finalizeAndReady().catch(() => { }))
+            this.client.on('auth_failure', (msg) => {
+                console.error(`[WORKER-${this.number}] AUTH FAILURE:`, msg)
+                this.emit('error', new Error(`Auth failed: ${msg}`))
+            })
+
+            // TITAN: Prevent start if another process is holding the journal/lock
+            const checkLocks = async () => {
+                const journal = path.join(this.sessionPath, `session-client_${this.number}`, 'first_party_sets.db-journal')
+                if (fs.existsSync(journal)) {
+                    console.log(`[WORKER-${this.number}] 🛡️ Found session journal lock. Waiting for release...`)
+                    await this._delay(2000)
+                }
+            }
+
+            checkLocks().then(() => {
+                this.client.initialize().catch(err => {
+                    console.error(`[WORKER-${this.number}] Init Error:`, err.message)
+                    reject(err)
+                })
+            }).catch(reject)
+
+            setTimeout(() => { if (!this.isReady) finalizeAndReady().catch(() => { }) }, 60000)
         })
     }
 
@@ -571,20 +620,76 @@ class ExtractionWorker extends EventEmitter {
         } catch (e) { }
     }
 
-    async close() { this.isCancelled = true; this.isReady = false; if (this.client) await this.client.destroy().catch(() => { }) }
+    async close() {
+        console.log(`[WORKER-${this.number}] Execution: Signal Shutdown...`)
+        this.isCancelled = true
+        this.isReady = false
+
+        try {
+            if (this.client && this.client.pupBrowser) {
+                const pages = await this.client.pupBrowser.pages().catch(() => [])
+                for (const page of pages) {
+                    if (!page.isClosed()) await page.close().catch(() => { })
+                }
+                // TITAN WINDOWS FIX: Small delay to let OS release file handles
+                await this._delay(1000)
+                await this.client.destroy().catch(err => {
+                    console.error(`[WORKER-${this.number}] Browser Destroy Error:`, err.message)
+                })
+            }
+        } catch (err) {
+            console.error(`[WORKER-${this.number}] Force Shutdown Error:`, err.message)
+        } finally {
+            this.client = null
+            console.log(`[WORKER-${this.number}] Engine: Shutdown Complete.`)
+        }
+    }
 
     async dispatchHumanReply(jid, textTemplate) {
         if (this._pendingReplies.has(jid)) return
         const timer = setTimeout(async () => {
             try {
-                await this._delay(2000)
+                // STEP 1: Biological "Read" Delay (Randomly 30 to 180 seconds, NO LOCK REQUIRED here)
+                const readDelayMs = Math.floor(Math.random() * (180000 - 30000 + 1)) + 30000;
+                await this._delay(readDelayMs);
+
+                // STEP 1.5: ACQUIRE THE UNIFIED MUTEX LOCK
+                while (this._isOccupied) await this._delay(1500);
+                this._isOccupied = true; // --- LOCK ACQUIRED ---
+
                 let finalMsg = textTemplate
                 try {
                     const contact = await this.client.getContactById(jid).catch(() => null)
                     finalMsg = textTemplate.replace(/{name}/gi, (contact?.pushname || contact?.name || 'there'))
                 } catch (e) { }
+
+                // STEP 2: The Typing Phase
+                const wordCount = finalMsg.split(/\s+/).filter(w => w.length > 0).length || 1;
+                const variance = 0.85 + (Math.random() * 0.3);
+                const typingDurationMs = Math.floor(wordCount * 4000 * variance);
+
+                try {
+                    const chat = await this.client.getChatById(jid);
+                    if (chat) await chat.sendStateTyping();
+                } catch (e) { }
+
+                // Pause while "typing..."
+                await this._delay(Math.min(typingDurationMs, 90000));
+
+                try {
+                    const chat = await this.client.getChatById(jid);
+                    if (chat) await chat.clearState();
+                } catch (e) { }
+
+                // STEP 3: Payload Drop
                 await this.sendMessage(jid, finalMsg, null, true)
-            } catch (err) { } finally { this._pendingReplies.delete(jid) }
+            } catch (err) {
+                console.error(`[WORKER-${this.number}] Auto-Reply Sequence Fail:`, err.message)
+            } finally {
+                this._pendingReplies.delete(jid);
+                this._isOccupied = false;
+                this._lastSimFinishedAt = Date.now();
+            }
         }, 100)
         this._pendingReplies.set(jid, timer)
     }

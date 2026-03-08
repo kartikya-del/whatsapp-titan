@@ -5,9 +5,10 @@ class BehaviorEngine {
     constructor() {
         this.selectors = {
             chatList: '#pane-side',
+            chatListScrollable: '#pane-side > div:nth-child(1) > div:nth-child(2)',
             chatItems: 'div[role="listitem"]',
             messagesArea: '[data-testid="messages-container"]',
-            inputArea: 'div[contenteditable="true"]',
+            inputArea: 'div[contenteditable="true"][role="textbox"]',
             activeChatHeader: 'header div[role="button"]'
         };
         this.onActivity = null;
@@ -20,7 +21,7 @@ class BehaviorEngine {
     /**
      * Performs a random passive behavior on the page.
      */
-    async performRandomBehavior(page) {
+    async performRandomBehavior(page, accountId = 'unknown') {
         const actions = [
             this.openRandomChat,
             this.scrollChatList,
@@ -30,12 +31,12 @@ class BehaviorEngine {
         ];
 
         const action = actions[Math.floor(Math.random() * actions.length)];
-        console.log(`[BEHAVIOR] Simulation: ${action.name}`);
+        console.log(`[BEHAVIOR-${accountId}] 🧬 Action: ${action.name}`);
 
         try {
             await action.call(this, page);
         } catch (err) {
-            console.error(`[BEHAVIOR] Action ${action.name} failed:`, err.message);
+            console.error(`[BEHAVIOR-${accountId}] ⚠️ Action ${action.name} failed:`, err.message);
         }
     }
 
@@ -59,6 +60,29 @@ class BehaviorEngine {
 
             await this.idlePause(page, 1500, 3000);
         }
+    }
+
+    async openSpecificChat(page, jid) {
+        const ok = await page.evaluate((targetJid) => {
+            if (window.Store && window.Store.Chat) {
+                const chat = window.Store.Chat.get(targetJid);
+                if (chat) {
+                    chat.open();
+                    return true;
+                }
+            }
+            return false;
+        }, jid);
+
+        if (!ok) {
+            console.log(`[BEHAVIOR] 🌩️ Could not open via Store. Falling back to click logic...`);
+            // Attempt to find by UI (though JID in UI is internal)
+            // For now, assume it's opened or we fail gracefully
+        }
+
+        // Wait for the active chat header to reflect we are in a chat
+        await page.waitForSelector(this.selectors.activeChatHeader, { timeout: 8000 }).catch(() => { });
+        await this.idlePause(page, 2000, 4000);
     }
 
     async scrollChatList(page) {
@@ -108,6 +132,64 @@ class BehaviorEngine {
                 await new Promise(r => setTimeout(r, 40 + Math.random() * 40));
             }
         }
+    }
+
+    async performPeerMessage(page, targetJid, texts, accountId = 'unknown') {
+        try {
+            // 1. Force Open Chat via Store & Click (Double reliability)
+            await page.evaluate((jid) => {
+                if (window.Store && window.Store.Chat) {
+                    const chat = window.Store.Chat.get(jid);
+                    if (chat) chat.open();
+                }
+            }, targetJid);
+
+            // Wait for input area to be ready
+            const inputSelector = `${this.selectors.inputArea}, [aria-placeholder="Type a message"], [data-testid="conversation-text-input"]`;
+            await page.waitForSelector(inputSelector, { timeout: 12000 }).catch(() => { });
+            await this.idlePause(page, 1500, 3000);
+
+            const input = await page.$(inputSelector);
+            if (!input) {
+                console.error(`[BEHAVIOR-${accountId}] ❌ Failed to find input area for P2P.`);
+                return false;
+            }
+
+            // Convince the browser we are humanly focusing without popping window
+            await input.click().catch(() => { });
+            await page.evaluate((sel) => {
+                const el = document.querySelector(sel);
+                if (el) el.focus();
+            }, inputSelector);
+            await this.idlePause(page, 500, 1000);
+
+            // 2. Handle Bursting (Humans send 2-3 messages in a row)
+            const bursts = Array.isArray(texts) ? texts : [texts];
+
+            for (let i = 0; i < bursts.length; i++) {
+                const message = bursts[i];
+                console.log(`[BEHAVIOR-${accountId}] 🖋️ Typing burst ${i + 1}/${bursts.length}: "${message.substring(0, 20)}..."`);
+
+                await input.focus();
+                for (const char of message) {
+                    await page.keyboard.sendCharacter(char);
+                    await new Promise(r => setTimeout(r, 60 + Math.random() * 120));
+                }
+
+                await new Promise(r => setTimeout(r, 400 + Math.random() * 800));
+                await page.keyboard.press('Enter');
+
+                // Small pause between multiple messages in a burst
+                if (i < bursts.length - 1) {
+                    await this.idlePause(page, 2000, 5000);
+                }
+            }
+
+            return true;
+        } catch (err) {
+            console.error(`[BEHAVIOR-${accountId}] ⚠️ P2P Message Fail:`, err.message);
+        }
+        return false;
     }
 
     async idlePause(page, min = 3000, max = 15000) {

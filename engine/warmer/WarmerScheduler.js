@@ -18,10 +18,8 @@ class WarmerScheduler {
         const baseDelaySec = Math.floor(Math.random() * (180 - 30 + 1)) + 30;
         const baseDelayMs = baseDelaySec * 1000;
 
-        // Apply circadian scaling
-        // Clamp activityLevel to avoid massive delays if it's near zero
-        const effectiveLevel = Math.max(0.05, activityLevel);
-        const finalDelay = baseDelayMs / effectiveLevel;
+        // TITAN TEST MODE: Biological scaling disabled.
+        const finalDelay = baseDelayMs; // / effectiveLevel;
 
         return Math.floor(finalDelay);
     }

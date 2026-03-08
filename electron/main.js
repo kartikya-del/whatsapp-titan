@@ -59,7 +59,12 @@ ipcMain.handle('accounts:list', async () => {
             else if (!worker.isReady && isBrowserAlive) liveState = 'initializing'
             else liveState = 'disconnected'
         }
-        return { ...acc, liveState }
+        const override = manager?.workerAutoReplyOverrides.get(acc.number)
+        const autoReply = (override && typeof override.autoReply === 'boolean')
+            ? override.autoReply
+            : (manager?.autoReplySettings?.enabled || false)
+
+        return { ...acc, liveState, autoReply }
     })
 })
 

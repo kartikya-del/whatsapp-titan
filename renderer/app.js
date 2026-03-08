@@ -635,11 +635,21 @@ document.addEventListener('DOMContentLoaded', () => {
             _autoReplyEnabled = config.autoReplyEnabled
             console.log(`[APP] ✅ Auto-Reply Status: ${_autoReplyEnabled ? 'ACTIVE' : 'INACTIVE'}`)
         }
+        if (config?.workerConfig) {
+            _workerConfig = config.workerConfig
+            console.log(`[APP] Loaded ${Object.keys(_workerConfig).length} worker config overrides`)
+            // TITAN: Sync all active overrides to backend immediately
+            Object.keys(_workerConfig).forEach(num => {
+                if (window.api.updateWorkerConfig) {
+                    window.api.updateWorkerConfig({ number: num, config: _workerConfig[num] })
+                }
+            })
+        }
+
         // CRITICAL: Push saved rules to the backend ExtractionManager immediately
-        // Without this, ExtractionManager starts with empty rules after every restart
         if ((_autoReplyRules && _autoReplyRules.length > 0) || _autoReplyEnabled) {
             window.api.updateAutoReplySettings({ enabled: _autoReplyEnabled, rules: _autoReplyRules })
-            console.log(`[APP] 🔄 Auto-Reply rules synced to backend`)
+            console.log(`[APP] 🔄 Auto-Reply global rules synced to backend`)
         }
 
         // TITAN: Restore Gemini API Key & AI Prompt
@@ -997,6 +1007,8 @@ async function syncAccountsWithBackend() {
             // }
 
             if (ba.extracting && acc.state !== STATES.EXTRACTING) acc.state = STATES.EXTRACTING
+            // TITAN: Sync the Auto-Reply status from backend overrides
+            if (ba.autoReply !== undefined) acc.autoReply = ba.autoReply
 
             // --- TITAN SYNC: Live Connection State ---
             if (ba.liveState === 'disconnected') {
@@ -2798,10 +2810,16 @@ function setupSidebarListeners(container) {
             const acc = accounts.get(num)
             if (acc) {
                 acc.autoReply = e.target.checked
+                // TITAN: Persist into global worker config
+                if (!_workerConfig) _workerConfig = {}
+                _workerConfig[num] = { ...(_workerConfig[num] || {}), autoReply: e.target.checked }
+
                 if (window.api.updateWorkerConfig) {
                     window.api.updateWorkerConfig({ number: num, config: { autoReply: e.target.checked } })
                 }
                 saveCurrentProject()
+                window.api.configSave({ workerConfig: _workerConfig }) // Persist
+                render() // Force UI sync
             }
         })
     })
@@ -2851,7 +2869,7 @@ function renderPersistentSidebar(leads, accounts) {
                             </div>
                     ` : visibleAccounts.map(acc => {
         const currentRange = acc.range || ''
-        const currentAR = acc.autoReply || false
+        const currentAR = (acc.autoReply !== undefined) ? acc.autoReply : (_workerConfig[acc.number]?.autoReply || false)
         return `
                         <div style="background:#fff; padding:12px; border-radius:10px; border:1px solid #e2e8f0; opacity: 1;">
                             <div style="display:flex; align-items:center; gap:12px; margin-bottom:8px;">
@@ -2869,7 +2887,7 @@ function renderPersistentSidebar(leads, accounts) {
                                 </select>
                                 <div style="display:flex; align-items:center; gap:8px; opacity: 1;">
                                     <span style="font-size:10px; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Bot</span>
-                                    <label class="titan-toggle" style="transform: scale(0.7); origin: right;">
+                                    <label class="titan-toggle" style="transform: scale(0.7); transform-origin: right;">
                                         <input type="checkbox" class="worker-ar-toggle" data-number="${acc.number}"
                                                 ${currentAR ? 'checked' : ''}>
                                         <span class="titan-toggle-slider"></span>

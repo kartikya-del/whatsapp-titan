@@ -288,7 +288,10 @@ class ExtractionManager extends EventEmitter {
             this.workers.set(number, worker)
 
             worker.on('qr', (qr) => this._pushToLane(number, 'system', { type: 'QR', qr }))
-            worker.on('ready', () => this._pushToLane(number, 'system', { type: 'READY' }))
+            worker.on('ready', () => {
+                this._pushToLane(number, 'system', { type: 'READY' })
+                this.emit('account_ready', { number })
+            })
             worker.on('error', (err) => this._pushToLane(number, 'system', { type: 'ERROR', error: err.message }))
             worker.on('disconnected', () => {
                 this.workers.delete(number)
@@ -551,11 +554,16 @@ class ExtractionManager extends EventEmitter {
             for (const [k, v] of this.outboundLedger.entries()) { if (k.startsWith(normJid)) { lead = v; break; } }
         }
         if (!lead || (Date.now() - lead.timestamp > 48 * 60 * 60 * 1000)) return
+
         if (fromMe) {
             if (isBot) return
             lead.humanInterrupted = true; this._saveLedger()
             return
         }
+
+        // TITAN: If this incoming message was flagged as a Bot (e.g., instant reply), STOP processing
+        if (isBot) return
+
         if (this.workers.has(from.split('@')[0])) return
         const workerOverride = this.workerAutoReplyOverrides.get(workerNumber)
         let isAutoReplyEnabled = (workerOverride && typeof workerOverride.autoReply === 'boolean') ? workerOverride.autoReply : this.autoReplySettings.enabled
@@ -570,6 +578,16 @@ class ExtractionManager extends EventEmitter {
                 this.survivability.updateEvent(lead.lastMessageId, { reply_received: true }).catch(() => { })
             }
             this.campaignManager.incrementVariantReply(lead.campaignId, lead.variantIdx, workerNumber)
+
+            // TITAN: Capture and display the FIRST reply in the Guardian log
+            this._pushToLane(workerNumber, 'system', {
+                type: 'BOT_ACTIVITY',
+                time: new Date().toLocaleTimeString(),
+                lead: lead.phone || from.split('@')[0],
+                action: 'CONVERSION',
+                details: `[Lead First Reply] ${body.substring(0, 70)}${body.length > 70 ? '...' : ''}`
+            });
+
             this._saveLedger()
         }
         if (!isAutoReplyEnabled) return
