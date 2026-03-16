@@ -37,6 +37,12 @@ window.WarmerUI = {
                     </label>
                 </div>
 
+                <!-- Suggestion Banner -->
+                <div id="warmer-suggestion-banner" style="display:none; background:#eff6ff; border:1px solid #bfdbfe; border-radius:12px; padding:14px 20px; margin-bottom:20px; align-items:center; gap:14px;">
+                    <span style="font-size:20px;">💡</span>
+                    <div style="font-size:13px; color:#1e40af; font-weight:600;">For best results, connect at least 2 WhatsApp accounts. The warmer simulates real conversations between your accounts to build trust and reduce ban risk.</div>
+                </div>
+
                 <!-- 2. Behavioral Metrics Grid -->
                 <div class="warmer-metrics-grid">
                     <div class="metric-card">
@@ -88,21 +94,17 @@ window.WarmerUI = {
             </div>
         `;
 
-        // Bind Controls with Optimistic UI
+        // Bind Controls
         const toggle = document.getElementById('warmer-toggle-btn');
         if (toggle) {
             toggle.onchange = (e) => {
                 const newState = e.target.checked;
-                // 1. Optimistic Update (Prevent snapback)
+
+                // Optimistic Update
                 this._pendingToggle = true;
                 if (this._toggleTimeout) clearTimeout(this._toggleTimeout);
+                this._toggleTimeout = setTimeout(() => { this._pendingToggle = false; }, 2000);
 
-                // 2. Clear pending flag after 2s (failsafe)
-                this._toggleTimeout = setTimeout(() => {
-                    this._pendingToggle = false;
-                }, 2000);
-
-                // 3. Send Command
                 window.api.toggleWarmer(newState);
             };
         }
@@ -138,9 +140,15 @@ window.WarmerUI = {
         // ONLY update toggle if user isn't interacting
         if (toggle && !this._pendingToggle) {
             toggle.checked = !!isRunning;
-            // Force attribute sync for stubborn browsers
             if (!!isRunning) toggle.setAttribute('checked', 'true');
             else toggle.removeAttribute('checked');
+        }
+
+        // Show/hide suggestion banner based on connected accounts
+        const suggestionBanner = document.getElementById('warmer-suggestion-banner');
+        const connectedCount = state.connectedCount || 0;
+        if (suggestionBanner) {
+            suggestionBanner.style.display = connectedCount < 2 ? 'flex' : 'none';
         }
 
         this._setText('header-active-sessions', `${activeCount} / 3 Active`);

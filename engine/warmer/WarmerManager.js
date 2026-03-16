@@ -26,6 +26,7 @@ class WarmerManager extends EventEmitter {
         this.activeLoops = new Map(); // accountId -> boolean
         this.pendingReplies = new Map(); // number -> { peer, thread, nextIdx }
         this.interrupts = new Map(); // number -> boolean (instant wake flag)
+        this.recentActivity = []; // Array of { timestamp, message, type }
         this.globalStarted = false;
 
         // Hook up behavior interactions to trust graph
@@ -101,19 +102,35 @@ class WarmerManager extends EventEmitter {
         this.emit('update', this.getDashboardState());
     }
 
+    _addActivity(message, type = 'action') {
+        const activity = {
+            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+            message,
+            type
+        };
+        this.recentActivity.unshift(activity);
+        if (this.recentActivity.length > 50) this.recentActivity.pop();
+        this.broadcastState();
+    }
+
     getDashboardState() {
         const accounts = this.extractionManager.registry.listAccounts();
         const circadianLevel = this.circadian.getActivityLevel();
 
+        let connectedCount = 0;
         const accountStates = accounts.map(acc => {
             const state = this.store.getState(acc.number);
+            const worker = this.extractionManager.workers.get(acc.number);
+            const isConnected = !!(worker && worker.isReady && worker.client && worker.client.pupPage && !worker.client.pupPage.isClosed());
+            if (isConnected) connectedCount++;
             return {
                 number: acc.number,
                 status: this.isRunning(acc.number) ? 'warming' : 'idle',
+                connected: isConnected,
                 progress: state.totalActions, // Map to progress for UI compatibility
                 target: 100, // Updated daily warming goal
-                trustScore: (85 + Math.random() * 10).toFixed(0), // Simulated trust score
-                entropyScore: (75 + Math.random() * 15).toFixed(0), // Simulated entropy
+                trustScore: this.extractionManager.registry.getTrustScore(acc.number).toFixed(1),
+                entropyScore: (75 + Math.random() * 15).toFixed(0), // Simulated entropy remains for now
                 intensity: circadianLevel.toFixed(2),
                 lastActivity: state.lastActivity ? new Date(state.lastActivity).toLocaleTimeString() : 'Never'
             };
@@ -122,9 +139,11 @@ class WarmerManager extends EventEmitter {
         return {
             isRunning: this.globalStarted,
             activeCount: this.activeLoops.size,
+            connectedCount: connectedCount,
             circadianMultiplier: circadianLevel.toFixed(2),
             circadianState: this._getCircadianLabel(circadianLevel),
-            accounts: accountStates
+            accounts: accountStates,
+            recentActivity: this.recentActivity
         };
     }
 
@@ -153,10 +172,12 @@ class WarmerManager extends EventEmitter {
 
                 if (!this.interrupts.get(accountId)) {
                     console.log(`[WARMER-${accountId}] 💤 Path: [Biological Reset]. Resting for ${Math.round(delay / 1000 / 60 * 10) / 10} min...`);
+                    this._addActivity(`[${accountId}] Resting for biological reset...`, 'info');
                     while (Date.now() < end) {
                         if (!this.activeLoops.get(accountId)) return;
                         if (this.interrupts.get(accountId)) {
                             console.log(`[WARMER-${accountId}] 🔔 Reactivity Interrupt: Peer is active. Picking up phone...`);
+                            this._addActivity(`[${accountId}] 🔔 Notified! Awakening for peer...`, 'success');
                             break;
                         }
                         await new Promise(r => setTimeout(r, 1000));
@@ -170,6 +191,7 @@ class WarmerManager extends EventEmitter {
                 if (!ok) continue;
 
                 console.log(`[WARMER-${accountId}] ⚡ Pulse Detected: Executing Human Sequence...`);
+                this._addActivity(`[${accountId}] Pulse detected: starting sequence.`, 'success');
 
                 // 1. Determine Narrative State
                 const pending = this.pendingReplies.get(accountId);
@@ -213,12 +235,16 @@ class WarmerManager extends EventEmitter {
                         }
 
                         console.log(`[WARMER-${accountId}] 🎭 [Step 3/4] Drafting Peer Response...`);
+                        this._addActivity(`[${accountId}] Drafting response to ${activePeer}...`, 'action');
                         const sent = await this.behavior.performPeerMessage(page, `${activePeer}@c.us`, activeText, accountId);
 
                         if (sent) {
                             console.log(`[WARMER-${accountId}] 🎭 [Step 4/4] Finalizing & Signaling Peer...`);
                             const currentIdx = (narrativeMode === 'P2P_REPLY') ? pending.nextIdx : 0;
                             const nextIdx = currentIdx + 1;
+
+                            // --- HEALTH: Warming dialogue boosts trust ---
+                            this.extractionManager.registry.addTrust(accountId, 0.5);
 
                             this.pendingReplies.delete(accountId);
                             if (nextIdx < activeThread.length) {
@@ -231,19 +257,23 @@ class WarmerManager extends EventEmitter {
                                 // TRIGGER REACTIVITY IN PEER
                                 if (Math.random() > 0.3) { // 70% chance for peer to wake up instantly
                                     this.interrupts.set(activePeer, true);
+                                    this._addActivity(`[${accountId}] Sent burst, pinging ${activePeer}.`, 'success');
                                 }
                             } else {
                                 console.log(`[WARMER-${accountId}] ✅ Real-World Dialogue Finished.`);
+                                this._addActivity(`[${accountId}] Dialogue with ${activePeer} finished.`, 'success');
                             }
                         }
                     } else {
                         console.log(`[WARMER-${accountId}] 🍃 [Step 1/3] Opening Random Chat...`);
+                        this._addActivity(`[${accountId}] Mimicking random usage patterns...`, 'action');
                         await this.behavior.openRandomChat(page);
                         console.log(`[WARMER-${accountId}] 🍃 [Step 2/3] Scrolling & Reading...`);
                         await this.behavior.scrollChatList(page);
                         await this.behavior.scrollChat(page);
                         console.log(`[WARMER-${accountId}] 🍃 [Step 3/3] Simulating Ghost Typing...`);
                         await this.behavior.simulateTyping(page);
+                        this._addActivity(`[${accountId}] Random interaction complete.`, 'success');
                     }
                 } catch (seqErr) {
                     console.error(`[WARMER-${accountId}] Sequence error:`, seqErr.message);

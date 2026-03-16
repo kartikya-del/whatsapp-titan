@@ -21,9 +21,7 @@ const STATES = {
 let _stagedLeads = []
 let _messageVariants = ["Hello {name}, hope you are doing well!"]
 let _innerSendTab = 'leads' // 'leads', 'messages', 'config', 'launch'
-let _autoReplyRules = [
-    { keyword: 'price', response: 'Hi {name}, our pricing starts from $99. Check our website for more!' }
-]
+let _autoReplyRules = []
 let _autoReplyEnabled = false
 let _manualLeadState = { name: '', phone: '', bulk: '', showBulk: false }
 let _geminiApiKey = ''
@@ -354,8 +352,26 @@ window.handleCampaignWizardNext = async (btn) => {
                     saveCurrentProject()
                 }
 
-                window.api.campaignStart({ campaignId, mapping, options: { delayMin: _userDelayMin, delayMax: _userDelayMax, variants: _messageVariants, attachedMedia: _attachedMedia, mediaSendMode: _mediaSendMode } })
-                _activeCampaigns.set(campaignId, { id: campaignId, leads: JSON.parse(JSON.stringify(window._activeCampaignQueue)), mapping, variants: [..._messageVariants], variantStats: _messageVariants.map(v => ({ text: v, sent: 0, replied: 0 })), startTime: Date.now(), status: 'RUNNING' })
+                window.api.campaignStart({ campaignId, mapping, options: { 
+                    delayMin: _userDelayMin, 
+                    delayMax: _userDelayMax, 
+                    variants: _messageVariants, 
+                    attachedMedia: _attachedMedia, 
+                    mediaSendMode: _mediaSendMode,
+                    sleepThreshold: _userSleepThreshold,
+                    sleepDuration: _userSleepDuration
+                } })
+                _activeCampaigns.set(campaignId, { 
+                    id: campaignId, 
+                    leads: JSON.parse(JSON.stringify(window._activeCampaignQueue)), 
+                    mapping, 
+                    variants: [..._messageVariants], 
+                    variantStats: _messageVariants.map(v => ({ text: v, sent: 0, replied: 0 })), 
+                    startTime: Date.now(), 
+                    status: 'RUNNING',
+                    sleepThreshold: _userSleepThreshold,
+                    sleepDuration: _userSleepDuration
+                })
                 _innerSendTab = 'launch'
                 _viewingCampaignId = campaignId; render();
             } catch (e) {
@@ -424,6 +440,7 @@ function _baseRender(token) {
     if (_activeCampaigns.size === 0 && _statusTimer) { clearInterval(_statusTimer); _statusTimer = null; }
 
     // TITAN: Scope Banner Visibility
+    // TITAN: Scope Banner Visibility
     const banner = document.getElementById('campaign-status-banner')
     if (banner) {
         if (activeTab === 'campaigns' && _activeCampaigns.size > 0) {
@@ -468,7 +485,7 @@ function _baseRender(token) {
             pane.style.display = 'block'
 
             // Map old renderers to new tabs
-            if (t === 'dashboard') { if (titleEl) titleEl.innerText = 'Mission Control'; if (typeof renderDashboard === 'function') renderDashboard(pane) }
+            if (t === 'dashboard') { if (titleEl) titleEl.innerText = 'Dashboard'; if (typeof renderDashboard === 'function') renderDashboard(pane) }
             if (t === 'devices') { if (titleEl) titleEl.innerText = 'Connected Devices'; renderAccounts(pane) }
             if (t === 'campaigns') { if (titleEl) titleEl.innerText = 'Campaign Center'; renderSendingCenter(pane) }
             if (t === 'grabber') { if (titleEl) titleEl.innerText = 'Group Extractor'; renderExtract(pane, token) }
@@ -646,11 +663,9 @@ document.addEventListener('DOMContentLoaded', () => {
             })
         }
 
-        // CRITICAL: Push saved rules to the backend ExtractionManager immediately
-        if ((_autoReplyRules && _autoReplyRules.length > 0) || _autoReplyEnabled) {
-            window.api.updateAutoReplySettings({ enabled: _autoReplyEnabled, rules: _autoReplyRules })
-            console.log(`[APP] 🔄 Auto-Reply global rules synced to backend`)
-        }
+        // CRITICAL: Always push rules to backend (even if empty) to clear stale rules
+        window.api.updateAutoReplySettings({ enabled: _autoReplyEnabled, rules: _autoReplyRules })
+        console.log(`[APP] 🔄 Auto-Reply synced to backend (${_autoReplyRules.length} rules, ${_autoReplyEnabled ? 'ACTIVE' : 'INACTIVE'})`)
 
         // TITAN: Restore Gemini API Key & AI Prompt
         if (config?.geminiApiKey) _geminiApiKey = config.geminiApiKey
@@ -699,8 +714,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
         modalError.innerText = ''
 
-        if (!number || number.length < 10) {
-            modalError.innerText = 'Please enter a valid 10-digit number.'
+        if (!number || number.length !== 10) {
+            modalError.innerText = 'Please enter exactly a 10-digit number.'
             phoneInput.focus()
             return;
         }
@@ -728,6 +743,14 @@ document.addEventListener('DOMContentLoaded', () => {
     })
 
     modalCancel.addEventListener('click', hidePhoneModal)
+
+    // TITAN: Real-time 10-digit enforcement
+    phoneInput.addEventListener('input', (e) => {
+        let val = e.target.value.replace(/\D/g, '')
+        if (val.length > 10) val = val.slice(-10)
+        e.target.value = val
+    })
+
     phoneInput.addEventListener('keypress', e => { if (e.key === 'Enter') modalConfirm.click() })
 
     // --- TITAN NAVIGATION ---
@@ -895,9 +918,65 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
             }
         })
-        render()
+    // LANE 6: HEALTH (Account Safety suggestions)
+    if (window.api.onHealthAlert) {
+        window.api.onHealthAlert((alert) => {
+            window.showHealthSuggestion(alert)
+        })
+    }
+
+    render()
     })
 })
+
+window.showHealthSuggestion = (alert) => {
+    // Remove if already exists for this number
+    const existing = document.getElementById(`health-alert-${alert.number}`)
+    if (existing) existing.remove()
+
+    const banner = document.createElement('div')
+    banner.id = `health-alert-${alert.number}`
+    banner.className = `health-alert-banner ${alert.tier}`
+    
+    const icon = alert.tier === 'caution' ? '🟡' : (alert.tier === 'warning' ? '🟠' : '🔴')
+    const title = alert.tier === 'caution' ? 'Account Fatigue' : (alert.tier === 'warning' ? 'Account Risk' : 'Critical Hazard')
+
+    banner.innerHTML = `
+        <div class="health-header">
+            <span class="health-icon">${icon}</span>
+            <span class="health-title">${title}</span>
+        </div>
+        <div class="health-body">
+            Account <b>+${alert.number}</b> trust score dropped to <b>${alert.trustScore}%</b>. 
+            We highly recommend increasing the delay to <b>${alert.suggestedDelay}s</b> to mimic human behavior.
+        </div>
+        <div class="health-actions">
+            <button class="health-btn health-btn-apply" id="health-apply-${alert.number}">Apply Suggestion</button>
+            <button class="health-btn health-btn-ignore" id="health-ignore-${alert.number}">Ignore Risk</button>
+        </div>
+    `
+
+    document.body.appendChild(banner)
+
+    // Handle Apply
+    document.getElementById(`health-apply-${alert.number}`).onclick = () => {
+        _userDelayMin = alert.suggestedDelay
+        _userDelayMax = alert.suggestedDelay + 60
+        window.showTitanBanner(`Protection Active: Delay increased to ${alert.suggestedDelay}s - ${alert.suggestedDelay + 60}s.`, 'success')
+        banner.remove()
+        render() // Update UI indicators
+    }
+
+    // Handle Ignore
+    document.getElementById(`health-ignore-${alert.number}`).onclick = () => {
+        banner.remove()
+    }
+
+    // Auto-remove after 30 seconds if not interacted with
+    setTimeout(() => {
+        if (banner.parentElement) banner.remove()
+    }, 30000)
+}
 
 
 window.api.onAccountExported(({ number, path, count }) => {
@@ -959,6 +1038,15 @@ window.api.onAccountError(({ number, error }) => {
     }
 })
 
+window.api.onAccountRemoved(({ number }) => {
+    console.log(`[APP] 🗑️ Account removed: ${number}`)
+    if (accounts.has(number)) {
+        accounts.delete(number)
+        if (activeExtractAccount === number) activeExtractAccount = null
+        render()
+    }
+})
+
 // Load initial config
 window.api.configGet().then(config => {
     if (config.geminiApiKey) _geminiApiKey = config.geminiApiKey
@@ -968,7 +1056,7 @@ window.api.configGet().then(config => {
     if (config.autoReplyEnabled !== undefined) _autoReplyEnabled = config.autoReplyEnabled
     if (config.campaignStats) _campaignStats = config.campaignStats
 
-    // --- CRITICAL SYNC: Prime the backend with saved rules ---
+    // --- CRITICAL SYNC: Always push current rules to backend (clears stale rules) ---
     window.api.updateAutoReplySettings({ enabled: _autoReplyEnabled, rules: _autoReplyRules })
 
     render()
@@ -980,6 +1068,17 @@ render()
 async function syncAccountsWithBackend() {
     try {
         const backendAccounts = await window.api.getAccounts()
+        const backendNumbers = new Set(backendAccounts.map(ba => ba.number))
+
+        // TITAN: Purge local accounts that no longer exist in backend
+        for (const num of accounts.keys()) {
+            if (!backendNumbers.has(num)) {
+                console.log(`[APP] 🧹 Purging stale local account: ${num}`)
+                accounts.delete(num)
+                if (activeExtractAccount === num) activeExtractAccount = null
+            }
+        }
+
         if (backendAccounts.length > 0) {
             console.log(`[APP] Sync: Received ${backendAccounts.length} accounts from backend`)
         }
@@ -1189,9 +1288,9 @@ function refreshAccountsList(list) {
             <div style="width:80px; height:80px; background:#eff6ff; border-radius:50%; display:flex; align-items:center; justify-content:center; margin-bottom:24px;">
                 <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"/><path d="M12 18h.01"/></svg>
             </div>
-            <h3 style="margin:0 0 8px 0; font-size:20px; font-weight:800; color:var(--text-main); letter-spacing:-0.02em;">No Neural Nodes Detected</h3>
-            <p style="color:var(--text-muted); margin:0 0 32px 0; font-size:14px; text-align:center; max-width:360px; line-height:1.6;">Link your WhatsApp accounts to the Titan Hive to begin industrial-scale extraction and outreach operations.</p>
-            <button id="empty-state-btn" class="btn-primary" style="padding:14px 40px; border-radius:12px; font-weight:800; font-size:14px; box-shadow:0 10px 20px -10px var(--primary);">+ Connect First Hive Node</button>
+            <h3 style="margin:0 0 8px 0; font-size:20px; font-weight:800; color:var(--text-main); letter-spacing:-0.02em;">No Devices Connected</h3>
+            <p style="color:var(--text-muted); margin:0 0 32px 0; font-size:14px; text-align:center; max-width:400px; line-height:1.6;">Link your WhatsApp accounts to the system to begin automated extraction and outreach operations.</p>
+            <button id="empty-state-btn" class="btn-primary" style="padding:14px 40px; border-radius:12px; font-weight:800; font-size:14px; box-shadow:0 10px 20px -10px var(--primary);">+ Add New Device</button>
         </div>`
         list.querySelector('#empty-state-btn')?.addEventListener('click', window.showPhoneModal)
         return
@@ -1299,7 +1398,7 @@ function refreshAccountsList(list) {
 function renderExtract(container, token) {
     if (token !== _renderToken) return
 
-    const readyAccounts = Array.from(accounts.values()).filter(a => a.state !== STATES.LOGGING_IN && a.state !== STATES.ERROR)
+    const readyAccounts = Array.from(accounts.values())
 
     let layout = container.querySelector('.extract-container')
     if (!layout) {
@@ -1350,21 +1449,25 @@ function renderExtract(container, token) {
             }
         }
     }
-    if (!activeExtractAccount || !accounts.has(activeExtractAccount)) activeExtractAccount = readyAccounts[0].number
+    if (!activeExtractAccount || !readyAccounts.find(a => a.number === activeExtractAccount)) {
+        activeExtractAccount = readyAccounts.length > 0 ? readyAccounts[0].number : null
+    }
 
     // Account pill tabs
     const cardsHtml = readyAccounts.map(acc => {
         const isActive = acc.number === activeExtractAccount
         const isExtracting = acc.state === STATES.EXTRACTING
+        const isErr = acc.state === STATES.ERROR || acc.state === STATES.DISCONNECTED
+        const dotColor = isExtracting ? '#8b5cf6' : acc.state === STATES.LOGGED_IN ? 'var(--primary)' : isErr ? '#ef4444' : '#94a3b8'
+
         return `
           <div class="acc-mini-card" data-number="${acc.number}"
-               style="display:flex; align-items:center; gap:10px; padding:12px 20px; border-radius:12px; cursor:pointer; border:2px solid ${isActive ? 'var(--primary)' : 'var(--border-light)'}; background:${isActive ? '#eff6ff' : '#fff'}; transition:all 0.2s; white-space:nowrap; box-shadow:${isActive ? '0 0 0 3px rgba(59,130,246,0.1)' : '0 1px 3px rgba(0,0,0,0.05)'};">
-            <div style="width:10px; height:10px; border-radius:50%; flex-shrink:0; background:${isExtracting ? '#8b5cf6' : isActive ? 'var(--primary)' : '#94a3b8'}; ${isActive && !isExtracting ? 'animation:pulse-dot 2s infinite;' : ''}"></div>
+               style="display:flex; align-items:center; gap:10px; padding:12px 20px; border-radius:12px; cursor:pointer; border:2px solid ${isActive ? (isErr ? '#ef4444' : 'var(--primary)') : 'var(--border-light)'}; background:${isActive ? (isErr ? '#fff5f5' : '#eff6ff') : '#fff'}; transition:all 0.2s; white-space:nowrap; box-shadow:${isActive ? '0 0 0 3px rgba(59,130,246,0.1)' : '0 1px 3px rgba(0,0,0,0.05)'};">
+            <div style="width:10px; height:10px; border-radius:50%; flex-shrink:0; background:${dotColor}; ${isActive && !isErr && !isExtracting ? 'animation:pulse-dot 2s infinite;' : ''}"></div>
             <div style="display:flex; flex-direction:column; gap:1px;">
-              <span style="font-size:15px; font-weight:800; color:${isActive ? 'var(--primary)' : 'var(--text-main)'}; letter-spacing:-0.02em;">+${acc.number}</span>
+              <span style="font-size:15px; font-weight:800; color:${isActive ? (isErr ? '#ef4444' : 'var(--primary)') : 'var(--text-main)'}; letter-spacing:-0.02em;">+${acc.number}</span>
               <span style="font-size:11px; color:var(--text-muted); font-weight:600; letter-spacing:0.02em;">
-                ${Math.max(acc.groups?.length || 0, acc.groupCount || 0).toLocaleString()} Groups &nbsp;·&nbsp; 
-                ${Math.max(acc.contacts?.length || 0, acc.contactCount || 0).toLocaleString()} Contacts
+                ${acc.state.replace('_', ' ').toUpperCase()}
               </span>
             </div>
           </div>
@@ -1467,6 +1570,36 @@ function setupExtractListeners(container) {
 
 function renderWorkspace(container, acc, token) {
     if (token !== _renderToken) return
+
+    // --- TITAN: Disconnected/Error Handling ---
+    if (acc.state === STATES.DISCONNECTED || acc.state === STATES.ERROR || acc.state === STATES.LOGGING_IN) {
+        let title = "Session Terminated"
+        let msg = "The WhatsApp Web connection for this worker was closed."
+        let btnText = "Reconnect Worker"
+        let icon = "⚡"
+
+        if (acc.state === STATES.ERROR) {
+            title = "Worker Connection Error"
+            msg = acc.error || "A problem occurred while connecting to the browser."
+            btnText = "Restart Connection"
+            icon = "❌"
+        } else if (acc.state === STATES.LOGGING_IN) {
+            title = "Connecting..."
+            msg = "Establishing connection with WhatsApp Web. Please wait or check the Devices section for the QR code."
+            btnText = "Force Reset"
+            icon = "⏳"
+        }
+
+        container.innerHTML = `
+            <div style="flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; background:#fff; border-radius:16px; border:1px solid var(--border-light); padding:60px; text-align:center;">
+                <div style="font-size:48px; margin-bottom:16px;">${icon}</div>
+                <h3 style="margin:0 0 8px 0; font-size:22px; font-weight:800; color:var(--text-main);">${title}</h3>
+                <p style="color:var(--text-muted); margin:0 32px 32px 32px; font-size:14px; line-height:1.6; max-width:400px;">${msg}</p>
+                <button class="btn-primary" onclick="window.api.startAddAccount('${acc.number}'); render();" style="padding:14px 40px; border-radius:12px; font-weight:800;">${btnText}</button>
+            </div>
+        `
+        return
+    }
 
     // --- TITAN SHIELD: Workspace Persistence ---
     let lp = container.querySelector('#lp-node')
@@ -2276,9 +2409,22 @@ function renderCampaignGallery(container) {
         : _campaignProjects.filter(c => c.status !== 'COMPLETED').map(c => {
             const st = statusCfg[c.status] || statusCfg['DRAFT']
             const activeCamp = _activeCampaigns.get(c.engineId)
-            const sent = activeCamp?.sent || 0
-            const total = c.leads?.length || 0
-            const pct = total > 0 ? Math.round((sent / total) * 100) : 0
+            
+            // TITAN FIX: Calculate true sent/failed by iterating target queue
+            let sent = 0
+            let failed = 0
+            let pending = 0
+            const activeLeads = activeCamp?.leads || c.leads || []
+            activeLeads.forEach(l => {
+                if (l.status === 'SENT') sent++
+                else if (l.status === 'FAILED') failed++
+                else pending++
+            })
+            
+            const total = activeLeads.length
+            const processed = sent + failed
+            const pct = total > 0 ? Math.round((processed / total) * 100) : 0
+            
             const isRunning = c.status === 'RUNNING'
             const timeAgo = c.created ? (() => {
                 const diff = Date.now() - c.created
@@ -2289,45 +2435,78 @@ function renderCampaignGallery(container) {
             })() : ''
             return `
             <div class="campaign-card" data-id="${c.id}"
-                 style="background:#fff; border-radius:14px; border:1.5px solid var(--border-light); overflow:hidden; cursor:pointer; transition:all 0.2s; display:flex; flex-direction:column;"
-                 onmouseover="this.style.borderColor='var(--primary)';this.style.boxShadow='0 4px 20px rgba(59,130,246,0.1)';this.style.transform='translateY(-2px)'"
-                 onmouseout="this.style.borderColor='var(--border-light)';this.style.boxShadow='none';this.style.transform='translateY(0)'">
+                 style="background:#fff; border-radius:16px; border:1px solid #e2e8f0; overflow:hidden; cursor:pointer; transition:all 0.3s cubic-bezier(0.16, 1, 0.3, 1); display:flex; flex-direction:column; box-shadow:0 2px 8px rgba(0,0,0,0.02);"
+                 onmouseover="this.style.borderColor='var(--primary)';this.style.boxShadow='0 12px 32px rgba(59,130,246,0.12)';this.style.transform='translateY(-3px)'"
+                 onmouseout="this.style.borderColor='#e2e8f0';this.style.boxShadow='0 2px 8px rgba(0,0,0,0.02)';this.style.transform='translateY(0)'">
               <!-- Color top stripe -->
-              <div style="height:4px; background:${st.bg};"></div>
-              <div style="padding:18px 20px; flex:1; display:flex; flex-direction:column; gap:12px;">
+              <div style="height:5px; background:${st.bg};"></div>
+              <div style="padding:20px; flex:1; display:flex; flex-direction:column; gap:16px;">
                 <!-- Status + date -->
                 <div style="display:flex; justify-content:space-between; align-items:center;">
-                  <span style="font-size:10px; font-weight:700; color:#fff; background:${st.bg}; padding:3px 10px; border-radius:20px; letter-spacing:0.05em;">${st.label}</span>
-                  <span style="font-size:11px; color:var(--text-muted);">${timeAgo}</span>
+                  <span style="font-size:10px; font-weight:800; color:#fff; background:${st.bg}; padding:4px 10px; border-radius:20px; letter-spacing:0.05em; display:flex; align-items:center; gap:6px; box-shadow:0 2px 6px ${st.dot}40;">
+                      ${isRunning ? '<span style="width:6px; height:6px; background:#fff; border-radius:50%; animation:pulse-dot 2s infinite;"></span>' : ''}${st.label}
+                  </span>
+                  <span style="font-size:11px; color:var(--text-muted); font-weight:600;">${timeAgo}</span>
                 </div>
+                
                 <!-- Name -->
-                <div style="font-size:16px; font-weight:800; color:var(--text-main); letter-spacing:-0.02em; line-height:1.2;">${c.name}</div>
-                <!-- Stats row -->
-                <div style="display:flex; gap:16px;">
-                  <span style="font-size:12px; color:var(--text-muted); font-weight:600;">👥 ${(c.leads?.length || 0).toLocaleString()} leads</span>
-                  <span style="font-size:12px; color:var(--text-muted); font-weight:600;">✉️ ${c.variants?.length || 1} variant${(c.variants?.length || 1) > 1 ? 's' : ''}</span>
+                <div style="font-size:18px; font-weight:800; color:var(--text-main); letter-spacing:-0.02em; line-height:1.2;">${c.name}</div>
+                
+                <!-- Mini Stats row -->
+                <div style="display:flex; gap:12px;">
+                  <div style="display:flex; align-items:center; gap:6px; background:#f8fafc; padding:6px 10px; border-radius:8px; border:1px solid #f1f5f9;">
+                      <span style="font-size:14px; opacity:0.8;">👥</span>
+                      <span style="font-size:13px; color:var(--text-main); font-weight:800;">${total.toLocaleString()} <span style="color:var(--text-muted); font-weight:600;">leads</span></span>
+                  </div>
+                  <div style="display:flex; align-items:center; gap:6px; background:#f8fafc; padding:6px 10px; border-radius:8px; border:1px solid #f1f5f9;">
+                      <span style="font-size:14px; opacity:0.8;">✉️</span>
+                      <span style="font-size:13px; color:var(--text-main); font-weight:800;">${c.variants?.length || 1} <span style="color:var(--text-muted); font-weight:600;">variant${(c.variants?.length || 1) > 1 ? 's' : ''}</span></span>
+                  </div>
                 </div>
+                
                 ${isRunning ? `
+                <!-- Advanced Metrics Grid -->
+                <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:8px;">
+                    <div style="text-align:center; background:#f0fdf4; border:1px solid #dcfce7; border-radius:10px; padding:10px 4px;">
+                        <div style="font-size:18px; font-weight:900; color:#16a34a;">${sent}</div>
+                        <div style="font-size:9px; font-weight:800; color:#15803d; text-transform:uppercase; margin-top:2px;">Sent</div>
+                    </div>
+                    <div style="text-align:center; background:#fffbeb; border:1px solid #fef3c7; border-radius:10px; padding:10px 4px;">
+                        <div style="font-size:18px; font-weight:900; color:#d97706;">${pending}</div>
+                        <div style="font-size:9px; font-weight:800; color:#b45309; text-transform:uppercase; margin-top:2px;">Pending</div>
+                    </div>
+                    <div style="text-align:center; background:#fef2f2; border:1px solid #fee2e2; border-radius:10px; padding:10px 4px;">
+                        <div style="font-size:18px; font-weight:900; color:#dc2626;">${failed}</div>
+                        <div style="font-size:9px; font-weight:800; color:#b91c1c; text-transform:uppercase; margin-top:2px;">Failed</div>
+                    </div>
+                </div>
+                
                 <!-- Progress bar -->
                 <div>
-                  <div style="display:flex; justify-content:space-between; margin-bottom:5px;">
-                    <span style="font-size:11px; font-weight:700; color:#22c55e;">${sent.toLocaleString()} sent</span>
-                    <span style="font-size:11px; color:var(--text-muted);">${pct}%</span>
+                  <div style="display:flex; justify-content:space-between; margin-bottom:8px; align-items:center;">
+                    <span style="font-size:11px; font-weight:800; color:var(--text-main); text-transform:uppercase; letter-spacing:0.05em;">Execution Progress</span>
+                    <span style="font-size:12px; font-weight:900; color:var(--primary);">${pct}%</span>
                   </div>
-                  <div style="height:6px; background:#f1f5f9; border-radius:99px; overflow:hidden;">
-                    <div style="height:100%; width:${pct}%; background:linear-gradient(90deg,#22c55e,#16a34a); border-radius:99px; transition:width 0.5s;"></div>
+                  <div style="height:8px; background:#f1f5f9; border-radius:99px; overflow:hidden; border:1px solid #e2e8f0;">
+                    <div style="height:100%; width:${pct}%; background:linear-gradient(90deg, #3b82f6, #60a5fa); border-radius:99px; transition:width 0.8s cubic-bezier(0.16, 1, 0.3, 1);"></div>
                   </div>
                 </div>` : ''}
                 <!-- Action buttons -->
                 <div style="display:flex; gap:8px; margin-top:auto;">
                   <button class="open-campaign-btn btn-primary" data-id="${c.id}"
                           style="flex:1; font-size:12px; font-weight:700; padding:9px 0; border-radius:8px;">
-                    ${isRunning ? '📊 Monitor' : (c.status === 'COMPLETED' ? '📋 View Report' : 'Open →')}
+                    ${isRunning ? 'Monitor' : (c.status === 'COMPLETED' ? 'View Report' : 'Open')}
                   </button>
                   <button class="delete-campaign-btn" data-id="${c.id}"
-                          style="padding:9px 12px; border:1.5px solid var(--border-light); border-radius:8px; background:#fff; color:var(--text-muted); cursor:pointer; font-size:13px; transition:all 0.15s;"
-                          onmouseover="this.style.borderColor='#fca5a5';this.style.color='#ef4444';this.style.background='#fef2f2'"
-                          onmouseout="this.style.borderColor='var(--border-light)';this.style.color='var(--text-muted)';this.style.background='#fff'">🗑</button>
+                          style="width:38px; height:38px; border-radius:10px; background:#ef4444; color:#fff; border:none; cursor:pointer; display:flex; align-items:center; justify-content:center; transition:all 0.15s; flex-shrink:0;"
+                          onmouseover="this.style.background='#dc2626';this.style.transform='scale(1.05)'"
+                          onmouseout="this.style.background='#ef4444';this.style.transform='scale(1)'"
+                          title="Delete Campaign">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                        <polyline points="3 6 5 6 21 6"></polyline>
+                        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                    </svg>
+                  </button>
                 </div>
               </div>
             </div>`
@@ -2351,19 +2530,20 @@ function renderCampaignGallery(container) {
 
       <!-- Stat Banners -->
       <div style="display:grid; grid-template-columns:repeat(4,1fr); gap:10px; flex-shrink:0;">
-        <div style="background:linear-gradient(135deg,#3b82f6,#2563eb); border-radius:10px; padding:14px 16px; color:#fff;">
+        <div class="stat-card" style="background:linear-gradient(135deg,#3b82f6,#2563eb); border-radius:10px; padding:14px 16px; color:#fff; cursor:pointer;" onclick="activeTab='reports'; render();">
           <div style="font-size:22px; font-weight:800; letter-spacing:-0.03em; line-height:1;">${totalCamps}</div>
           <div style="font-size:10px; font-weight:600; opacity:0.85; margin-top:3px; text-transform:uppercase; letter-spacing:0.05em;">Total</div>
         </div>
-        <div style="background:linear-gradient(135deg,#22c55e,#16a34a); border-radius:10px; padding:14px 16px; color:#fff;">
+        <div id="stat-card-running" style="background:linear-gradient(135deg,#22c55e,#16a34a); border-radius:10px; padding:14px 16px; color:#fff; cursor:pointer; transition:transform 0.2s;" 
+             onmouseover="this.style.transform='scale(1.02)'" onmouseout="this.style.transform='scale(1)'">
           <div style="font-size:22px; font-weight:800; letter-spacing:-0.03em; line-height:1;">${runningCamps}</div>
           <div style="font-size:10px; font-weight:600; opacity:0.85; margin-top:3px; text-transform:uppercase; letter-spacing:0.05em;">Running</div>
         </div>
-        <div style="background:linear-gradient(135deg,#f59e0b,#d97706); border-radius:10px; padding:14px 16px; color:#fff;">
+        <div class="stat-card" style="background:linear-gradient(135deg,#f59e0b,#d97706); border-radius:10px; padding:14px 16px; color:#fff;">
           <div style="font-size:22px; font-weight:800; letter-spacing:-0.03em; line-height:1;">${draftCamps}</div>
           <div style="font-size:10px; font-weight:600; opacity:0.85; margin-top:3px; text-transform:uppercase; letter-spacing:0.05em;">Drafts</div>
         </div>
-        <div style="background:linear-gradient(135deg,#8b5cf6,#7c3aed); border-radius:10px; padding:14px 16px; color:#fff;">
+        <div class="stat-card" style="background:linear-gradient(135deg,#8b5cf6,#7c3aed); border-radius:10px; padding:14px 16px; color:#fff; cursor:pointer;" onclick="activeTab='reports'; render();">
           <div style="font-size:22px; font-weight:800; letter-spacing:-0.03em; line-height:1;">${doneCamps}</div>
           <div style="font-size:10px; font-weight:600; opacity:0.85; margin-top:3px; text-transform:uppercase; letter-spacing:0.05em;">Completed</div>
         </div>
@@ -2432,11 +2612,13 @@ function setupGalleryListeners(container) {
                 _workerConfig = camp.workerConfig || {}
                 _userDelayMin = Math.max(10, camp.delayMin || 60)
                 _userDelayMax = Math.max(_userDelayMin + 10, camp.delayMax || 120)
+                _userSleepThreshold = camp.sleepThreshold || 50
+                _userSleepDuration = camp.sleepDuration || 15
                 _attachedMedia = camp.attachedMedia || null
                 _attachedMediaName = camp.attachedMediaName || ''
                 _mediaSendMode = camp.mediaSendMode || 'text_only'
-                // Land on 'leads' by default as requested
-                _innerSendTab = 'leads'
+                // Land on 'launch' if running, otherwise 'leads'
+                _innerSendTab = (camp.status === 'RUNNING') ? 'launch' : 'leads'
                 _campaignView = 'builder'
                 container.innerHTML = ''
                 render()
@@ -2454,6 +2636,21 @@ function setupGalleryListeners(container) {
             }
         })
     })
+
+    const runningCard = container.querySelector('#stat-card-running')
+    if (runningCard) {
+        runningCard.onclick = () => {
+            if (_activeCampaigns.size > 0) {
+                activeTab = 'campaigns'
+                _campaignView = 'builder'
+                _currentCampaignId = Array.from(_activeCampaigns.keys()).pop()
+                _innerSendTab = 'launch'
+                render()
+            } else {
+                window.showTitanBanner('No active campaigns running.', 'info')
+            }
+        }
+    }
 }
 
 function saveCurrentProject() {
@@ -2465,6 +2662,8 @@ function saveCurrentProject() {
             _campaignProjects[idx].rules = _autoReplyRules || []
             _campaignProjects[idx].delayMin = _userDelayMin
             _campaignProjects[idx].delayMax = _userDelayMax
+            _campaignProjects[idx].sleepThreshold = _userSleepThreshold
+            _campaignProjects[idx].sleepDuration = _userSleepDuration
             _campaignProjects[idx].batchSize = _userBatchSize
             _campaignProjects[idx].step = _innerSendTab
             _campaignProjects[idx].attachedMedia = _attachedMedia
@@ -2777,20 +2976,44 @@ function setupSidebarListeners(container) {
 
     container.querySelector('#sidebar-delay-min')?.addEventListener('input', (e) => {
         let val = parseInt(e.target.value) || 0
-        if (val < 10) val = 10
         _userDelayMin = val
-        if (_userDelayMax < _userDelayMin + 10) {
-            _userDelayMax = _userDelayMin + 10
+        
+        // Dynamic gap adjustment
+        if (_userDelayMax < _userDelayMin + 20) {
+            _userDelayMax = _userDelayMin + 20
             const maxInput = container.querySelector('#sidebar-delay-max')
             if (maxInput) maxInput.value = _userDelayMax
         }
         saveCurrentProject()
     })
+
+    container.querySelector('#sidebar-delay-min')?.addEventListener('blur', (e) => {
+        if (_userDelayMin < 10) {
+            _userDelayMin = 10
+            e.target.value = 10
+            // Re-check gap
+            if (_userDelayMax < _userDelayMin + 20) {
+                _userDelayMax = _userDelayMin + 20
+                const maxInput = container.querySelector('#sidebar-delay-max')
+                if (maxInput) maxInput.value = _userDelayMax
+            }
+            saveCurrentProject()
+        }
+    })
+
     container.querySelector('#sidebar-delay-max')?.addEventListener('input', (e) => {
         let val = parseInt(e.target.value) || 0
-        if (val < _userDelayMin + 10) val = _userDelayMin + 10
         _userDelayMax = val
         saveCurrentProject()
+    })
+
+    container.querySelector('#sidebar-delay-max')?.addEventListener('blur', (e) => {
+        // Enforce at least 20s gap from min
+        if (_userDelayMax < _userDelayMin + 20) {
+            _userDelayMax = _userDelayMin + 20
+            e.target.value = _userDelayMax
+            saveCurrentProject()
+        }
     })
 
     container.querySelectorAll('.variant-select-sidebar').forEach(sel => {
@@ -3220,11 +3443,11 @@ function renderConfiguration() {
                     <div style="display:flex; gap:20px; align-items:center; margin-bottom:32px;">
                         <div style="flex:1;">
                             <label style="display:block; font-size:11px; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:8px;">Min Delay (Sec)</label>
-                            <input type="number" id="matrix-delay-min" class="matrix-input" value="${Math.max(10, _userDelayMin)}" style="width:100%; padding:12px; border-radius:12px;">
+                            <input type="number" id="matrix-delay-min" class="matrix-input" value="${Math.max(10, _userDelayMin)}" min="10" style="width:100%; padding:12px; border-radius:12px;">
                         </div>
                         <div style="flex:1;">
                             <label style="display:block; font-size:11px; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:8px;">Max Delay (Sec)</label>
-                            <input type="number" id="matrix-delay-max" class="matrix-input" value="${Math.max(_userDelayMin + 10, _userDelayMax)}" style="width:100%; padding:12px; border-radius:12px;">
+                            <input type="number" id="matrix-delay-max" class="matrix-input" value="${Math.max(_userDelayMin + 10, _userDelayMax)}" min="20" style="width:100%; padding:12px; border-radius:12px;">
                         </div>
                     </div>
 
@@ -3234,11 +3457,11 @@ function renderConfiguration() {
                     <div style="display:flex; gap:20px; align-items:center;">
                         <div style="flex:1;">
                             <label style="display:block; font-size:11px; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:8px;">Messages Before Sleep</label>
-                            <input type="number" id="matrix-sleep-threshold" class="matrix-input" value="${_userSleepThreshold}" style="width:100%; padding:12px; border-radius:12px;">
+                            <input type="number" id="matrix-sleep-threshold" class="matrix-input" value="${_userSleepThreshold}" min="1" style="width:100%; padding:12px; border-radius:12px;">
                         </div>
                         <div style="flex:1;">
                             <label style="display:block; font-size:11px; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:8px;">Sleep Duration (Min)</label>
-                            <input type="number" id="matrix-sleep-duration" class="matrix-input" value="${_userSleepDuration}" style="width:100%; padding:12px; border-radius:12px;">
+                            <input type="number" id="matrix-sleep-duration" class="matrix-input" value="${_userSleepDuration}" min="1" style="width:100%; padding:12px; border-radius:12px;">
                         </div>
                     </div>
                     
@@ -3299,20 +3522,44 @@ function setupConfigurationListeners(container) {
     // DELAY INPUTS
     container.querySelector('#matrix-delay-min')?.addEventListener('input', (e) => {
         let val = parseInt(e.target.value) || 0
-        if (val < 10) val = 10
         _userDelayMin = val
-        if (_userDelayMax < _userDelayMin + 10) {
-            _userDelayMax = _userDelayMin + 10
+        
+        // Dynamic gap adjustment
+        if (_userDelayMax < _userDelayMin + 20) {
+            _userDelayMax = _userDelayMin + 20
             const maxInput = container.querySelector('#matrix-delay-max')
             if (maxInput) maxInput.value = _userDelayMax
         }
         saveCurrentProject()
     })
+    
+    container.querySelector('#matrix-delay-min')?.addEventListener('blur', (e) => {
+        if (_userDelayMin < 10) {
+            _userDelayMin = 10
+            e.target.value = 10
+            // Re-check gap
+            if (_userDelayMax < _userDelayMin + 20) {
+                _userDelayMax = _userDelayMin + 20
+                const maxInput = container.querySelector('#matrix-delay-max')
+                if (maxInput) maxInput.value = _userDelayMax
+            }
+            saveCurrentProject()
+        }
+    })
+
     container.querySelector('#matrix-delay-max')?.addEventListener('input', (e) => {
         let val = parseInt(e.target.value) || 0
-        if (val < _userDelayMin + 10) val = _userDelayMin + 10
         _userDelayMax = val
         saveCurrentProject()
+    })
+
+    container.querySelector('#matrix-delay-max')?.addEventListener('blur', (e) => {
+        // Enforce at least 20s gap from min
+        if (_userDelayMax < _userDelayMin + 20) {
+            _userDelayMax = _userDelayMin + 20
+            e.target.value = _userDelayMax
+            saveCurrentProject()
+        }
     })
 
     // SLEEP MODE INPUTS
@@ -3320,9 +3567,24 @@ function setupConfigurationListeners(container) {
         _userSleepThreshold = parseInt(e.target.value) || 0
         saveCurrentProject()
     })
+    container.querySelector('#matrix-sleep-threshold')?.addEventListener('blur', (e) => {
+        if (_userSleepThreshold < 1) {
+            _userSleepThreshold = 1
+            e.target.value = 1
+            saveCurrentProject()
+        }
+    })
+
     container.querySelector('#matrix-sleep-duration')?.addEventListener('input', (e) => {
         _userSleepDuration = parseInt(e.target.value) || 0
         saveCurrentProject()
+    })
+    container.querySelector('#matrix-sleep-duration')?.addEventListener('blur', (e) => {
+        if (_userSleepDuration < 1) {
+            _userSleepDuration = 1
+            e.target.value = 1
+            saveCurrentProject()
+        }
     })
 
     // Listen for range changes in sidebar (via global poll or event)
@@ -4243,11 +4505,7 @@ function renderAnalytics(container) {
                 </table>
            </div>
            
-           <div class="card" style="margin-top:24px; padding:32px; min-height:150px; display:flex; flex-direction:column; justify-content:center; align-items:center; text-align:center; background:linear-gradient(180deg, #fff 0%, #f9fafb 100%);">
-                <div style="font-size:24px; margin-bottom:12px;">📈</div>
-                <h3 style="margin:0 0 8px 0; font-weight:800; font-size:15px;">Behavioral Intelligence Pipeline</h3>
-                <p style="color:var(--text-muted); max-width:400px; font-size:12px;">Historical charting and deep-dive sentiment analysis will populate here as your campaigns reach maturity.</p>
-           </div>
+           <!-- Removed Behavioral Intelligence Pipeline as requested -->
 `
     if (container.innerHTML !== html) {
         container.innerHTML = html
@@ -4270,8 +4528,14 @@ function setupAnalyticsListeners(container) {
     if (resetBtn) {
         resetBtn.addEventListener('click', async () => {
             if (await window.titanConfirm('Reset Intelligence', "Reset all historical intelligence data? This cannot be undone.")) {
+                // Wipe active campaign stats
+                _activeCampaigns.clear()
+                
+                // Clear the stats
                 _campaignStats = { totalSent: 0, totalFailed: 0, totalReceived: 0, activeCampaigns: 0 }
                 _campaignHistory = []
+                
+                // Sync to disk
                 window.api.configSave({ campaignStats: _campaignStats, campaignHistory: [] })
                 render()
             }
@@ -4412,7 +4676,8 @@ window.api.onCampaignProgress(({ campaignId, number, sent, total, status, contac
                         tr.id = `launch-row-${c.phone}`
                         tr.style.borderBottom = '1px solid #f1f5f9'
                         tr.innerHTML = `
-                            <td style="font-family:monospace; font-weight:700;">${c.phone}</td>
+                            <td style="font-family:monospace; font-weight:700;">+${c.phone}</td>
+                            <td class="worker-cell" style="font-size:12px; font-weight:700; color:var(--primary); font-family:monospace;">-</td>
                             <td style="color:var(--text-muted); font-weight:500;">${c.name || '-'}</td>
                             <td><span class="status-badge titan-badge-pill">PENDING</span></td>
                             <td class="time-cell" style="text-align:right; font-size:11px; color:var(--text-muted);">-</td>
@@ -4426,12 +4691,15 @@ window.api.onCampaignProgress(({ campaignId, number, sent, total, status, contac
 
                     // Update Styles & Content
                     tr.style.background = c.status === 'SENT' ? '#f0fdf4' : (c.status === 'FAILED' ? '#fef2f2' : 'transparent')
+                    
+                    const workerCell = tr.querySelector('.worker-cell')
+                    if (workerCell && number) workerCell.innerText = `+${number}`
 
                     const badge = tr.querySelector('.status-badge')
                     if (badge) {
                         badge.innerText = c.status || 'PENDING'
                         // Update classes
-                        badge.className = `status - badge titan - badge - pill ${c.status === 'SENT' ? 'titan-badge-green' : (c.status === 'FAILED' ? 'titan-badge-red' : 'status-badge-pending')} `
+                        badge.className = `status-badge titan-badge-pill ${c.status === 'SENT' ? 'titan-badge-green' : (c.status === 'FAILED' ? 'titan-badge-red' : 'status-badge-pending')}`
                         // Update styles
                         badge.style.color = c.status === 'SENT' ? '#166534' : (c.status === 'FAILED' ? '#991b1b' : '#64748b')
                         badge.style.background = c.status === 'SENT' ? '#dcfce7' : (c.status === 'FAILED' ? '#fee2e2' : '#f1f5f9')
@@ -4514,8 +4782,9 @@ window.api.onCampaignStatusUpdate(({ campaignId, status, duration, details }) =>
     // 3. Handle Waiting / Randomized Delays
     if (status === 'WAITING') {
         if (activeCamp.countdownInterval) clearInterval(activeCamp.countdownInterval)
-        activeCamp.waitState = { active: true, seconds: duration || 0 }
+        activeCamp.waitState = { active: true, seconds: duration || 0, details: details || 'Protocols Active' }
         window._waitingUntil = Date.now() + (activeCamp.waitState.seconds * 1000)
+        window._waitingDetails = activeCamp.waitState.details // Global for easy access
 
         const updateUI = () => {
             if (activeCamp.status !== 'WAITING' || window._titanStopping || localStorage.getItem('titan_kill') === 'true') {
@@ -4537,8 +4806,9 @@ window.api.onCampaignStatusUpdate(({ campaignId, status, duration, details }) =>
         activeCamp.countdownInterval = setInterval(updateUI, 1000)
     } else {
         if (activeCamp.countdownInterval) clearInterval(activeCamp.countdownInterval)
-        activeCamp.waitState = { active: false, seconds: 0 }
+        activeCamp.waitState = { active: false, seconds: 0, details: '' }
         window._waitingUntil = 0
+        window._waitingDetails = ''
 
         // ONLY RENDER IF STATUS ACTUALLY CHANGED TO AVOID FLICKER
         if (prevStatus !== status) {
@@ -4775,7 +5045,7 @@ function renderDashboard(container) {
         totalHealth: rawOv.totalHealth ?? 100,
         status: rawOv.status || 'READY',
         color: rawOv.color || '#22c55e',
-        remark: rawOv.remark || 'NETWORK STATUS NOMINAL. OPERATE WITH STANDARD PROTOCOLS.',
+        remark: rawOv.remark || 'all systems normal. your accounts are safe and working well.',
         riskAccounts: rawOv.riskAccounts || 0,
         criticalAccounts: rawOv.criticalAccounts || 0,
         avgDeliveryRate: rawOv.avgDeliveryRate || 0,
@@ -4783,6 +5053,8 @@ function renderDashboard(container) {
         repliesReceived: rawOv.repliesReceived || 0,
         activeDevicesCount: rawOv.activeDevicesCount || 0
     }
+
+
 
     container.innerHTML = `
     <div class="dashboard-layout" style="display:flex; flex-direction:column; gap:24px;">
@@ -4808,7 +5080,7 @@ function renderDashboard(container) {
 
                 <!-- TACTICAL REMARK -->
                 <div>
-                    <div style="font-size:11px; font-weight:800; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:12px;">Titan Neural Analysis</div>
+                    <div style="font-size:11px; font-weight:800; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:12px;">Safety Report</div>
                     <div style="background:#fff; border:1px solid var(--border-light); border-radius:12px; padding:20px; box-shadow:inset 0 2px 4px rgba(0,0,0,0.02);">
                         <p style="margin:0; font-family:monospace; font-size:14px; line-height:1.6; color:var(--text-main); font-weight:600;">
                             ${ov.remark}
@@ -4835,22 +5107,18 @@ function renderDashboard(container) {
         </div>
         
         <!-- DASHBOARD CARDS -->
-        <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 24px;">
+        <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px;">
             <div class="card" style="padding:24px; border-top: 4px solid var(--primary);">
                 <div style="font-size:11px; font-weight:800; color:var(--text-muted); text-transform:uppercase; margin-bottom:8px;">Lifetime Sent</div>
                 <div style="font-size: 32px; font-weight:900;">${_campaignStats.totalSent.toLocaleString()}</div>
             </div>
             <div class="card" style="padding:24px; border-top: 4px solid var(--status-ready);">
                 <div style="font-size:11px; font-weight:800; color:var(--text-muted); text-transform:uppercase; margin-bottom:8px;">Active Devices</div>
-                <div style="font-size: 32px; font-weight:900;">${ov.activeDevicesCount} <span style="font-size:14px; color:#94a3b8; font-weight:600;">/ ${accounts.size}</span></div>
+                <div style="font-size: 32px; font-weight:900;">${ov.activeDevicesCount}</div>
             </div>
             <div class="card" style="padding:24px; border-top: 4px solid var(--status-warn);">
                 <div style="font-size:11px; font-weight:800; color:var(--text-muted); text-transform:uppercase; margin-bottom:8px;">Avg. Delivery Rate</div>
                 <div style="font-size: 32px; font-weight:900;">${Math.round(ov.avgDeliveryRate || 0)}%</div>
-            </div>
-            <div class="card" style="padding:24px; border-top: 4px solid #8b5cf6;">
-                <div style="font-size:11px; font-weight:800; color:var(--text-muted); text-transform:uppercase; margin-bottom:8px;">Global DB Size</div>
-                <div style="font-size: 32px; font-weight:900;">${(ov.globalDbSize || 0).toLocaleString()}</div>
             </div>
         </div>
 
@@ -5009,13 +5277,13 @@ function renderLaunchStep(leads) {
                 </div>
             </div>
             ` : (window._waitingUntil > Date.now() ? `
-            <div class="titan-card animate-pulse-soft" style="padding:16px; margin-bottom:0px; background:#eff6ff; border:1px solid #bfdbfe; display:flex; align-items:center; justify-content:center; gap:20px; border-radius:16px;">
-                <div style="font-size:28px;">⏳</div>
+            <div class="titan-card animate-pulse-soft" style="padding:16px; margin-bottom:0px; background:${(window._waitingDetails || '').includes('Sleep') ? '#fefce8' : '#eff6ff'}; border:1px solid ${(window._waitingDetails || '').includes('Sleep') ? '#fef08a' : '#bfdbfe'}; display:flex; align-items:center; justify-content:center; gap:20px; border-radius:16px;">
+                <div style="font-size:28px;">${(window._waitingDetails || '').includes('Sleep') ? '😴' : '⏳'}</div>
                 <div style="text-align:left;">
-                    <div style="font-size:14px; font-weight:800; color:#1e40af; text-transform:uppercase; letter-spacing:0.05em;">Randomized Safety Delay Active</div>
-                    <div style="font-size:12px; color:#60a5fa; font-weight:600;">Simulating human behavior to protect your account.</div>
+                    <div style="font-size:14px; font-weight:800; color:${(window._waitingDetails || '').includes('Sleep') ? '#854d0e' : '#1e40af'}; text-transform:uppercase; letter-spacing:0.05em;">${window._waitingDetails || 'Safety Protocol Active'}</div>
+                    <div style="font-size:12px; color:${(window._waitingDetails || '').includes('Sleep') ? '#a16207' : '#60a5fa'}; font-weight:600;">Simulating human behavior to protect your account.</div>
                 </div>
-                <div class="live-countdown" style="font-size:32px; font-weight:900; color:#2563eb; font-variant-numeric: tabular-nums; min-width:80px; text-align:right;">
+                <div class="live-countdown" style="font-size:32px; font-weight:900; color:${(window._waitingDetails || '').includes('Sleep') ? '#d97706' : '#2563eb'}; font-variant-numeric: tabular-nums; min-width:105px; text-align:right;">
                     ${Math.ceil((window._waitingUntil - Date.now()) / 1000)}s
                 </div>
             </div>
@@ -5067,16 +5335,18 @@ function renderLaunchStep(leads) {
                     <table class="titan-table">
                         <thead>
                             <tr>
-                                <th style="width:160px;">Phone</th>
+                                <th style="width:140px;">Phone</th>
+                                <th style="width:160px;">Worker</th>
                                 <th>Name</th>
                                 <th style="width:120px;">Status</th>
-                                <th style="text-align:right; width:140px;">Time</th>
+                                <th style="text-align:right; width:120px;">Time</th>
                             </tr>
                         </thead>
                         <tbody id="launch-activity-body">
                             ${leads.map(l => `
                                 <tr id="launch-row-${l.phone}" style="background:${l.status === 'SENT' ? '#f0fdf4' : (l.status === 'FAILED' ? '#fef2f2' : 'transparent')}; border-bottom: 1px solid #f1f5f9;">
-                                    <td style="font-family:monospace; font-weight:700;">${l.phone}</td>
+                                    <td style="font-family:monospace; font-weight:700;">+${l.phone}</td>
+                                    <td class="worker-cell" style="font-size:12px; font-weight:700; color:var(--primary); font-family:monospace;">${l.senderNumber ? `+${l.senderNumber}` : '-'}</td>
                                     <td style="color:var(--text-muted); font-weight:500;">${l.name || '-'}</td>
                                     <td>
                                         <span class="status-badge titan-badge-pill ${l.status === 'SENT' ? 'titan-badge-green' : (l.status === 'FAILED' ? 'titan-badge-red' : 'status-badge-pending')}" 

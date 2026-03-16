@@ -39,7 +39,8 @@ class AccountRegistry {
                 extracting: false,
                 todayCount: 0,
                 lastDate: this._today(),
-                extractionState: null
+                extractionState: null,
+                trustScore: 100
             })
 
             this._cleanupLockFiles(number)
@@ -59,6 +60,7 @@ class AccountRegistry {
                 if (!acc) continue
                 acc.todayCount = raw[number][today] || 0
                 acc.lastDate = today
+                if (typeof raw[number].trustScore === 'number') acc.trustScore = raw[number].trustScore
             }
         } catch (e) { }
     }
@@ -67,7 +69,7 @@ class AccountRegistry {
         const today = this._today()
         const data = {}
         for (const acc of this.accounts.values()) {
-            data[acc.number] = { [today]: acc.todayCount }
+            data[acc.number] = { [today]: acc.todayCount, trustScore: acc.trustScore }
         }
         fs.writeFileSync(this.usageFile, JSON.stringify(data, null, 2))
     }
@@ -120,7 +122,8 @@ class AccountRegistry {
             extracting: false,
             todayCount: 0,
             lastDate: this._today(),
-            extractionState: null
+            extractionState: null,
+            trustScore: 100
         })
         return sessionPath
     }
@@ -170,7 +173,21 @@ class AccountRegistry {
         const acc = this.getAccount(number)
         this._ensureDate(acc)
         acc.todayCount += count
+        // Deduct trust: -0.04% per message sent
+        acc.trustScore = Math.max(0, acc.trustScore - (count * 0.04))
         this._persistUsage()
+    }
+
+    addTrust(number, points) {
+        const acc = this.accounts.get(number)
+        if (!acc) return
+        acc.trustScore = Math.min(100, acc.trustScore + points)
+        this._persistUsage()
+    }
+
+    getTrustScore(number) {
+        const acc = this.accounts.get(number)
+        return acc ? acc.trustScore : 100
     }
 
     resetUsage(number) {

@@ -144,16 +144,16 @@ class SurvivabilityEngine {
         const stats = metrics?.last100 || { deliveryRate: 1, failureRate: 0 };
 
         if (score >= 90) {
-            return 'NOMINAL: Performance metrics within safety bounds.';
+            return 'all systems normal. your accounts are safe and working well.';
         } else if (score >= 75) {
             const dr = Math.round(stats.deliveryRate * 100);
-            return `ELEVATED RISK: Delivery rate fluctuating (${dr}%). Monitor account intensity.`;
+            return `minor risk. delivery rate is ${dr}%. try to send a bit slower.`;
         } else if (score >= 60) {
             const fr = Math.round(stats.failureRate * 100);
-            return `WARNING: High failure rate detected (${fr}%). Delivery suppression suspected.`;
+            return `warning. many messages are failing (${fr}%). check your numbers.`;
         } else {
             const dr = Math.round(stats.deliveryRate * 100);
-            return `CRITICAL: Severe delivery degradation (${dr}%). Account likely restricted/flagged.`;
+            return `high risk. delivery is very low (${dr}%). stop sending for now.`;
         }
     }
 

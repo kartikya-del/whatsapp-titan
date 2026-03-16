@@ -55,8 +55,9 @@ ipcMain.handle('accounts:list', async () => {
         let liveState = 'disconnected'
         if (worker) {
             const isBrowserAlive = worker.client?.pupBrowser?.isConnected()
-            if (worker.isReady && isBrowserAlive) liveState = 'ready'
-            else if (!worker.isReady && isBrowserAlive) liveState = 'initializing'
+            const isPageAlive = worker.client?.pupPage && !worker.client.pupPage.isClosed()
+            if (worker.isReady && isBrowserAlive && isPageAlive) liveState = 'ready'
+            else if (isBrowserAlive && isPageAlive) liveState = 'initializing'
             else liveState = 'disconnected'
         }
         const override = manager?.workerAutoReplyOverrides.get(acc.number)
@@ -329,6 +330,7 @@ app.whenReady().then(async () => {
     manager.on('campaign:status', (d) => mainWindow?.webContents.send('campaign:status:update', d))
     campaignManager.on('queue:progress', (d) => mainWindow?.webContents.send('campaign:progress', d))
     campaignManager.on('campaign:state', (d) => mainWindow?.webContents.send('campaign:state:updated', d))
+    manager.on('health:alert', (d) => mainWindow?.webContents.send('health:alert', d))
 
     // Warmer Update forwarding
     warmerManager.on('update', (state) => {

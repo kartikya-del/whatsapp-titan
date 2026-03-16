@@ -8,8 +8,9 @@ class BehaviorEngine {
             chatListScrollable: '#pane-side > div:nth-child(1) > div:nth-child(2)',
             chatItems: 'div[role="listitem"]',
             messagesArea: '[data-testid="messages-container"]',
-            inputArea: 'div[contenteditable="true"][role="textbox"]',
-            activeChatHeader: 'header div[role="button"]'
+            inputArea: '#main footer div[contenteditable="true"][role="textbox"]',
+            activeChatHeader: '#main header div[role="button"]',
+            searchInput: 'div[contenteditable="true"][data-testid="search-input"], div[contenteditable="true"][data-tab="3"]'
         };
         this.onActivity = null;
     }
@@ -75,13 +76,18 @@ class BehaviorEngine {
         }, jid);
 
         if (!ok) {
-            console.log(`[BEHAVIOR] 🌩️ Could not open via Store. Falling back to click logic...`);
-            // Attempt to find by UI (though JID in UI is internal)
-            // For now, assume it's opened or we fail gracefully
+            console.log(`[BEHAVIOR] 🌩️ Opening "${jid}" via URL navigation...`);
+            try {
+                const pureNumber = jid.split('@')[0];
+                await page.goto(`https://web.whatsapp.com/send?phone=${pureNumber}`, { waitUntil: 'networkidle0', timeout: 15000 });
+                await new Promise(r => setTimeout(r, 3000));
+            } catch (fallbackErr) {
+                console.error(`[BEHAVIOR] ❌ URL fallback failed:`, fallbackErr.message);
+            }
         }
 
         // Wait for the active chat header to reflect we are in a chat
-        await page.waitForSelector(this.selectors.activeChatHeader, { timeout: 8000 }).catch(() => { });
+        await page.waitForSelector(this.selectors.activeChatHeader, { timeout: 10000 }).catch(() => { });
         await this.idlePause(page, 2000, 4000);
     }
 
@@ -145,13 +151,13 @@ class BehaviorEngine {
             }, targetJid);
 
             // Wait for input area to be ready
-            const inputSelector = `${this.selectors.inputArea}, [aria-placeholder="Type a message"], [data-testid="conversation-text-input"]`;
-            await page.waitForSelector(inputSelector, { timeout: 12000 }).catch(() => { });
+            const inputSelector = `#main footer div[contenteditable="true"][role="textbox"], #main div[contenteditable="true"][data-testid="conversation-text-input"], [data-testid="conversation-text-input"]`;
+            await page.waitForSelector(inputSelector, { timeout: 15000 }).catch(() => { });
             await this.idlePause(page, 1500, 3000);
 
             const input = await page.$(inputSelector);
             if (!input) {
-                console.error(`[BEHAVIOR-${accountId}] ❌ Failed to find input area for P2P.`);
+                console.error(`[BEHAVIOR-${accountId}] ❌ Failed to find input area for P2P after opening.`);
                 return false;
             }
 

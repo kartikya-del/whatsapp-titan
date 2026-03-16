@@ -214,8 +214,23 @@ class ExtractionManager extends EventEmitter {
         }))
 
         const avgHealth = registryAccounts.length > 0 ? Math.floor(totalRiskScore / registryAccounts.length) : 100
+        
+        // TITAN 3.0: Simplified overview structure for the dashboard
+        const overview = {
+            totalHealth: avgHealth,
+            status: avgHealth > 80 ? 'SAFE' : avgHealth > 60 ? 'CAUTION' : 'AT RISK',
+            color: avgHealth > 80 ? '#22c55e' : avgHealth > 60 ? '#f59e0b' : '#ef4444',
+            remark: 'all systems normal. your accounts are safe and working well.',
+            riskAccounts: riskyCount,
+            criticalAccounts: criticalCount,
+            avgDeliveryRate: totalSent > 0 ? (totalDelivered / totalSent) * 100 : 100,
+            activeDevicesCount: this.workers.size, // Fixed: Real active count
+            totalSent,
+            repliesReceived: totalReplied
+        }
+
         return {
-            averageHealth: avgHealth,
+            overview,
             accounts: accountStats,
             alerts: { critical: criticalCount, warning: riskyCount }
         }
@@ -474,8 +489,9 @@ class ExtractionManager extends EventEmitter {
         await this._ensureWriterReady(worker)
         const queue = this.campaignManager.getQueue(campaignId, number)
         if (!queue) return
-        const { delayMin = 60, delayMax = 120, variants = ["Hi"] } = options
+        const { delayMin = 60, delayMax = 120, variants = ["Hi"], sleepThreshold = 0, sleepDuration = 0 } = options
         let sent = queue.sent || 0; let failed = queue.failed || 0
+        let sessionSent = 0 // Track messages sent in this specific session
         worker.isCancelled = false
         try {
             for (let i = 0; i < queue.contacts.length; i++) {
@@ -483,6 +499,22 @@ class ExtractionManager extends EventEmitter {
                 const c = queue.contacts[i]
                 if (c.status === 'SENT' || c.status === 'FAILED') continue
                 if (worker.isCancelled) break
+
+                // 🚀 TITAN: SLEEP MODE LOGIC
+                if (sleepThreshold > 0 && sessionSent > 0 && sessionSent % sleepThreshold === 0) {
+                    const sleepSec = sleepDuration * 60
+                    console.log(`[MANAGER] 😴 Sleep Mode Active: Pausing for ${sleepDuration} minutes...`)
+                    this.emit('campaign:status', { campaignId, status: 'WAITING', details: `Sleep Mode: ${sleepDuration}m`, duration: sleepSec })
+                    
+                    let remainingSleepMs = sleepSec * 1000
+                    while (remainingSleepMs > 0 && !worker.isCancelled) {
+                        while (this.isPaused && !worker.isCancelled) await new Promise(r => setTimeout(r, 1000))
+                        await new Promise(r => setTimeout(r, 1000)); remainingSleepMs -= 1000
+                    }
+                    if (worker.isCancelled) break
+                    console.log(`[MANAGER] 🌅 Sleep Mode Over: Resuming...`)
+                }
+
                 let variantIdx = (options.variantIndex === undefined || options.variantIndex === 'auto') ? (i % variants.length) : parseInt(options.variantIndex)
                 let message = (variants[variantIdx] || variants[0]).replace(/{name}/gi, (c.name && c.name !== 'Manual Lead') ? c.name : "there")
                 const jid = c.phone.includes('@') ? c.phone : `${c.phone}@c.us`
@@ -508,7 +540,7 @@ class ExtractionManager extends EventEmitter {
                     result = { success: false, error: err.message }
                 }
                 if (result.success) {
-                    c.status = 'SENT'; sent++
+                    c.status = 'SENT'; sent++; sessionSent++;
                     this.outboundLedger.set(jid, {
                         campaignId,
                         variantIdx,
@@ -526,11 +558,15 @@ class ExtractionManager extends EventEmitter {
                     }).catch(() => { })
                     this._saveLedger()
                     this.campaignManager.incrementVariantSent(campaignId, variantIdx)
+
+                    // --- HEALTH: Deduct trust per message ---
+                    this.registry.addTrust(number, -0.04)
+                    this._checkHealthAlert(number, campaignId)
                 } else { c.status = 'FAILED'; failed++ }
                 this.campaignManager.updateQueueProgress(campaignId, number, { sent, failed, contacts: queue.contacts, status: worker.isCancelled ? 'CANCELLED' : (sent + failed >= queue.total ? 'COMPLETE' : 'RUNNING') })
                 if (i < queue.contacts.length - 1 && !worker.isCancelled) {
                     let dMin = Number(delayMin); let dMax = Number(delayMax)
-                    if (isNaN(dMin) || dMin < 5) dMin = 5; if (isNaN(dMax) || dMax < 10) dMax = 10
+                    if (isNaN(dMin) || dMin < 10) dMin = 10; if (isNaN(dMax) || dMax < dMin + 20) dMax = dMin + 20 
                     if (dMin > dMax) [dMin, dMax] = [dMax, dMin]
                     const randomSec = Math.floor(Math.random() * (dMax - dMin + 1)) + dMin
                     this.emit('campaign:status', { campaignId, status: 'WAITING', details: `Delay: ${randomSec}s`, duration: randomSec })
@@ -543,6 +579,7 @@ class ExtractionManager extends EventEmitter {
             }
         } catch (err) { }
         this.registry.consume(number, sent)
+
     }
 
     async _handleIncomingMessage(workerNumber, { from, body, fromMe, isBot, timestamp }) {
@@ -579,6 +616,10 @@ class ExtractionManager extends EventEmitter {
             }
             this.campaignManager.incrementVariantReply(lead.campaignId, lead.variantIdx, workerNumber)
 
+            // --- HEALTH: Real human reply boosts trust ---
+            this.registry.addTrust(workerNumber, 0.25)
+            this._checkHealthAlert(workerNumber, lead.campaignId)
+
             // TITAN: Capture and display the FIRST reply in the Guardian log
             this._pushToLane(workerNumber, 'system', {
                 type: 'BOT_ACTIVITY',
@@ -600,6 +641,36 @@ class ExtractionManager extends EventEmitter {
                 lead.triggeredRules.push(idx); worker.dispatchHumanReply(from, rule.response)
                 this._saveLedger(); break
             }
+        }
+    }
+
+    _checkHealthAlert(number, campaignId) {
+        const score = this.registry.getTrustScore(number)
+        if (!this._healthAlertState) this._healthAlertState = new Map()
+        const lastAlert = this._healthAlertState.get(number) || 100
+
+        let suggestedDelay = null
+        let tier = null
+
+        if (score < 40 && lastAlert >= 40) {
+            suggestedDelay = 300; tier = 'critical'
+        } else if (score < 60 && lastAlert >= 60) {
+            suggestedDelay = 120; tier = 'warning'
+        } else if (score < 80 && lastAlert >= 80) {
+            suggestedDelay = 60; tier = 'caution'
+        }
+
+        if (tier) {
+            this._healthAlertState.set(number, score)
+            this.emit('health:alert', {
+                number,
+                campaignId,
+                trustScore: Math.round(score * 100) / 100,
+                tier,
+                suggestedDelay,
+                message: `Account ${number} health is ${score.toFixed(1)}%. Suggested minimum delay: ${suggestedDelay}s.`
+            })
+            console.log(`[HEALTH] ⚠️ Account ${number} dropped to ${score.toFixed(1)}% (${tier}). Suggesting ${suggestedDelay}s delay.`)
         }
     }
 }

@@ -230,6 +230,16 @@ class ExtractionWorker extends EventEmitter {
                         };
                         await this.client.pupPage.evaluateOnNewDocument(snifferScript);
                         await this.client.pupPage.evaluate(snifferScript).catch(() => { });
+
+                        // TITAN: Detect manual tab closure
+                        this.client.pupPage.on('close', () => {
+                            if (!this.isCancelled && this.isReady) {
+                                console.warn(`[WORKER-${this.number}] ⚠️ WhatsApp tab closed by user.`);
+                                this.isReady = false;
+                                this.emit('disconnected');
+                                this.close().catch(() => { });
+                            }
+                        });
                     }
                     await this._ensureBridge(); await this._vaccinateStore()
                 } catch (e) { }

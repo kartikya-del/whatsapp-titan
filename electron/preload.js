@@ -173,5 +173,6 @@ contextBridge.exposeInMainWorld('api', {
     getSurvivabilityStats: () => ipcRenderer.invoke('survivability:stats'),
     getWarmerState: () => ipcRenderer.invoke('warmer:get-state'),
     toggleWarmer: (enabled) => ipcRenderer.send('warmer:toggle', { enabled }),
-    onWarmerUpdate: (cb) => ipcRenderer.on('warmer:update', (e, d) => cb(d))
+    onWarmerUpdate: (cb) => ipcRenderer.on('warmer:update', (e, d) => cb(d)),
+    onHealthAlert: (cb) => ipcRenderer.on('health:alert', (e, d) => cb(d))
 })
