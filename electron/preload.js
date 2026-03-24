@@ -83,10 +83,10 @@ contextBridge.exposeInMainWorld('api', {
     onAccountRemoved: (cb) => ipcRenderer.on('account:removed', (e, d) => cb(d)),
     onAccountDisconnected: (cb) => ipcRenderer.on('account:disconnected', (e, d) => cb(d)),
 
-    // --- LICENSE EXPIRY (Stub — no backend handler exists yet) ---
-    getLicenseExpiry: async () => ({ hasExpiry: false, expired: false, daysLeft: 999 }),
+    // --- LICENSE EXPIRY & LOCKS ---
+    getLicenseExpiry: async () => ipcRenderer.invoke('license:expiry'),
+    onLicenseLock: (cb) => ipcRenderer.on('license:lock', (e, d) => cb(d)),
 
-    // --- ACCOUNT DATA HYDRATION ---
     getAccountData: async (number) => ipcRenderer.invoke('account:data', { number }),
 
     // --- RECONNECT (post-license activation) ---

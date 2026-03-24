@@ -38,6 +38,7 @@ class AccountRegistry {
                 sessionPath: path.join(this.accountsDir, folder),
                 extracting: false,
                 todayCount: 0,
+                lifetimeCount: 0,
                 lastDate: this._today(),
                 extractionState: null,
                 trustScore: 100
@@ -59,6 +60,7 @@ class AccountRegistry {
                 const acc = this.accounts.get(number)
                 if (!acc) continue
                 acc.todayCount = raw[number][today] || 0
+                acc.lifetimeCount = raw[number].lifetimeCount || 0
                 acc.lastDate = today
                 if (typeof raw[number].trustScore === 'number') acc.trustScore = raw[number].trustScore
             }
@@ -69,7 +71,11 @@ class AccountRegistry {
         const today = this._today()
         const data = {}
         for (const acc of this.accounts.values()) {
-            data[acc.number] = { [today]: acc.todayCount, trustScore: acc.trustScore }
+            data[acc.number] = { 
+                [today]: acc.todayCount, 
+                lifetimeCount: acc.lifetimeCount,
+                trustScore: acc.trustScore 
+            }
         }
         fs.writeFileSync(this.usageFile, JSON.stringify(data, null, 2))
     }
@@ -102,7 +108,8 @@ class AccountRegistry {
         return Array.from(this.accounts.values()).map(a => ({
             number: a.number,
             extracting: a.extracting,
-            todayCount: a.todayCount
+            todayCount: a.todayCount,
+            lifetimeCount: a.lifetimeCount
         }))
     }
 
@@ -121,6 +128,7 @@ class AccountRegistry {
             sessionPath,
             extracting: false,
             todayCount: 0,
+            lifetimeCount: 0,
             lastDate: this._today(),
             extractionState: null,
             trustScore: 100
@@ -173,6 +181,7 @@ class AccountRegistry {
         const acc = this.getAccount(number)
         this._ensureDate(acc)
         acc.todayCount += count
+        acc.lifetimeCount += count
         // Deduct trust: -0.04% per message sent
         acc.trustScore = Math.max(0, acc.trustScore - (count * 0.04))
         this._persistUsage()

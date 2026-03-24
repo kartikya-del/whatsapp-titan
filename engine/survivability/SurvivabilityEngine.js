@@ -101,14 +101,7 @@ class SurvivabilityEngine {
 
         // If newly started, assign a high base with minor deductions for "training"
         if (totalSent < 50) {
-            let trainingDeduction = 0;
-            trainingDeduction += (activityConfig.intensity || 1) * 4;
-            trainingDeduction += (activityConfig.total || 1) * 3;
-            // session and presence are browser-level flags from obfuscated code
-            trainingDeduction -= (activityConfig.session || 1) * 2;
-            trainingDeduction -= (activityConfig.presence || 1) * 1;
-
-            return Math.max(90, 100 - trainingDeduction);
+            return 100;
         }
 
         if (!last100) return 100;

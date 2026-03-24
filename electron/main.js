@@ -137,6 +137,7 @@ ipcMain.on('extraction:clear-ui', (e, d) => manager?.clearAccountBuffer(d.number
 ipcMain.on('account:clear-all-data', (e, d) => manager?.clearAccountData(d.number))
 ipcMain.on('account:extract:start', async (e, d) => {
     try {
+        licenseManager?.ensureValidLicense()
         const ids = (d.groupIds && d.groupIds.length > 0) ? d.groupIds : manager.getSelectedGroups(d.number);
         await manager?.extractGroups(d.number, ids)
     } catch (err) {
@@ -219,14 +220,21 @@ ipcMain.on('campaign:updateAutoReply', (e, s) => manager?.setAutoReplySettings(s
 ipcMain.on('worker:update-config', (e, { number, config }) => manager?.updateWorkerConfig(number, config))
 
 ipcMain.on('campaign:start', async (e, d) => {
-    const staggerBase = d.options?.delayMin ? Math.max(5000, d.options.delayMin * 500) : 10000;
-    for (const m of d.mapping) {
-        const workerOptions = { ...d.options, ...m }
-        manager?.runCampaignForNumber(m.number, d.campaignId, workerOptions)
-        if (d.mapping.length > 1) {
-            const stagger = Math.floor(Math.random() * staggerBase) + 2000
-            await new Promise(r => setTimeout(r, stagger))
+    try {
+        licenseManager?.ensureValidLicense()
+        const staggerBase = d.options?.delayMin ? Math.max(5000, d.options.delayMin * 500) : 10000;
+        for (const m of d.mapping) {
+            const workerOptions = { ...d.options, ...m }
+            manager?.runCampaignForNumber(m.number, d.campaignId, workerOptions)
+            if (d.mapping.length > 1) {
+                const stagger = Math.floor(Math.random() * staggerBase) + 2000
+                await new Promise(r => setTimeout(r, stagger))
+            }
         }
+    } catch (err) {
+        mainWindow?.webContents.send('campaign:status:update', {
+            campaignId: d.campaignId, status: 'ERROR', details: err.message
+        });
     }
 })
 
@@ -263,6 +271,7 @@ ipcMain.handle('license:validate', async (e, key) => {
     return res
 })
 ipcMain.handle('license:startTrial', async () => await licenseManager?.startFreeTrial())
+ipcMain.handle('license:expiry', () => licenseManager?.getExpiryInfo())
 
 // -- Warmer & Survivability (Hybrid Integration) --
 ipcMain.handle('survivability:stats', async () => await manager?.getSurvivabilityStats())
@@ -339,17 +348,20 @@ app.whenReady().then(async () => {
 
     createWindow()
 
-    // Heartbeat
+    // Heartbeat: re-validate license every 5 seconds
     setInterval(async () => {
         const result = await licenseManager.silentValidate();
         if (!result.success && result.reason !== 'No license key stored.') {
             manager?.closeAll();
             warmerManager?.stop();
             mainWindow?.webContents.send('license:lock', { reason: result.reason });
+            
+            // Wait 5 seconds to show the lock screen reason, then forcefully terminate the application
+            setTimeout(() => app.quit(), 5000);
         }
-    }, 60 * 1000);
+    }, 5 * 1000);
 
-    // Auto-Start
+    // Auto-Start accounts only if licensed
     const licStatus = licenseManager.getStatus();
     if (licStatus.isValid) {
         const accounts = registry.listAccounts()

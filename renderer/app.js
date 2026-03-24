@@ -2657,6 +2657,12 @@ function saveCurrentProject() {
     if (_currentCampaignId) {
         const idx = _campaignProjects.findIndex(c => c.id === _currentCampaignId)
         if (idx !== -1) {
+            // TITAN: Sync leads with live progress if campaign is active
+            const active = _activeCampaigns.get(_currentCampaignId)
+            if (active && active.leads) {
+                _stagedLeads = active.leads
+            }
+
             _campaignProjects[idx].leads = _stagedLeads || []
             _campaignProjects[idx].variants = _messageVariants || []
             _campaignProjects[idx].rules = _autoReplyRules || []
@@ -3284,7 +3290,7 @@ function renderStagingArea(accounts) {
                                         <div style="font-size:14px; margin-top:8px;">Add a number manually or import an Excel file to see them here.</div>
                                     </td>
                                 </tr>
-                            ` : _stagedLeads.map((l, i) => {
+                            ` : (_stagedLeads.slice(0, 100).map((l, i) => {
         const sourceLabel = (l.groupSource || 'Manual Entry').toUpperCase()
         return `
                                 <tr style="border-bottom: 1px solid #f1f5f9;">
@@ -3299,7 +3305,13 @@ function renderStagingArea(accounts) {
                                     </td>
                                 </tr>
                                 `
-    }).join('')}
+    }).join('') + (_stagedLeads.length > 100 ? `
+                                <tr>
+                                    <td colspan="5" style="text-align:center; padding:16px; background:#f8fafc; color:#64748b; font-size:12px; font-weight:600; border-top:1px solid #e2e8f0;">
+                                        Showing top 100 of ${total} contacts. All contacts will be included in the campaign.
+                                    </td>
+                                </tr>
+    `: ''))}
                         </tbody>
                     </table>
                 </div>
@@ -4613,9 +4625,9 @@ window.api.onCampaignProgress(({ campaignId, number, sent, total, status, contac
             if (l && l.status !== c.status) {
                 l.status = c.status
                 l.timestamp = Date.now()
-                if (c.status === 'SENT') {
+                if (c.status === 'SENT' || c.status === 'FAILED') {
                     l.senderNumber = number
-                    l.variantNum = c.variantNum
+                    if (c.status === 'SENT') l.variantNum = c.variantNum
                 }
             }
 
@@ -4776,15 +4788,18 @@ window.api.onCampaignStatusUpdate(({ campaignId, status, duration, details }) =>
     const activeCamp = _activeCampaigns.get(campaignId)
 
     const prevStatus = activeCamp.status
-    // 2. Synchronize Internal State (Important: Do this before status check)
+    // 2. Synchronize Internal State
     activeCamp.status = status;
 
     // 3. Handle Waiting / Randomized Delays
     if (status === 'WAITING') {
         if (activeCamp.countdownInterval) clearInterval(activeCamp.countdownInterval)
-        activeCamp.waitState = { active: true, seconds: duration || 0, details: details || 'Protocols Active' }
-        window._waitingUntil = Date.now() + (activeCamp.waitState.seconds * 1000)
-        window._waitingDetails = activeCamp.waitState.details // Global for easy access
+        activeCamp.waitState = { 
+            active: true, 
+            seconds: duration || 0, 
+            details: details || 'Protocols Active',
+            until: Date.now() + ((duration || 0) * 1000)
+        }
 
         const updateUI = () => {
             if (activeCamp.status !== 'WAITING' || window._titanStopping || localStorage.getItem('titan_kill') === 'true') {
@@ -4793,7 +4808,7 @@ window.api.onCampaignStatusUpdate(({ campaignId, status, duration, details }) =>
             }
             if (activeCamp.waitState.seconds > 0) {
                 activeCamp.waitState.seconds--
-                window._waitingUntil = Date.now() + (activeCamp.waitState.seconds * 1000)
+                activeCamp.waitState.until = Date.now() + (activeCamp.waitState.seconds * 1000)
             } else {
                 clearInterval(activeCamp.countdownInterval)
                 activeCamp.waitState.active = false
@@ -5276,15 +5291,15 @@ function renderLaunchStep(leads) {
                     <div style="font-size:12px; color:#a16207; font-weight:600;">Sending operation suspended. Click resume to continue.</div>
                 </div>
             </div>
-            ` : (window._waitingUntil > Date.now() ? `
-            <div class="titan-card animate-pulse-soft" style="padding:16px; margin-bottom:0px; background:${(window._waitingDetails || '').includes('Sleep') ? '#fefce8' : '#eff6ff'}; border:1px solid ${(window._waitingDetails || '').includes('Sleep') ? '#fef08a' : '#bfdbfe'}; display:flex; align-items:center; justify-content:center; gap:20px; border-radius:16px;">
-                <div style="font-size:28px;">${(window._waitingDetails || '').includes('Sleep') ? '😴' : '⏳'}</div>
+            ` : (activeCamp.waitState?.active && activeCamp.waitState?.until > Date.now() ? `
+            <div class="titan-card animate-pulse-soft" style="padding:16px; margin-bottom:0px; background:${(activeCamp.waitState.details || '').includes('Sleep') ? '#fefce8' : '#eff6ff'}; border:1px solid ${(activeCamp.waitState.details || '').includes('Sleep') ? '#fef08a' : '#bfdbfe'}; display:flex; align-items:center; justify-content:center; gap:20px; border-radius:16px;">
+                <div style="font-size:28px;">${(activeCamp.waitState.details || '').includes('Sleep') ? '😴' : '⏳'}</div>
                 <div style="text-align:left;">
-                    <div style="font-size:14px; font-weight:800; color:${(window._waitingDetails || '').includes('Sleep') ? '#854d0e' : '#1e40af'}; text-transform:uppercase; letter-spacing:0.05em;">${window._waitingDetails || 'Safety Protocol Active'}</div>
-                    <div style="font-size:12px; color:${(window._waitingDetails || '').includes('Sleep') ? '#a16207' : '#60a5fa'}; font-weight:600;">Simulating human behavior to protect your account.</div>
+                    <div style="font-size:14px; font-weight:800; color:${(activeCamp.waitState.details || '').includes('Sleep') ? '#854d0e' : '#1e40af'}; text-transform:uppercase; letter-spacing:0.05em;">${activeCamp.waitState.details || 'Safety Protocol Active'}</div>
+                    <div style="font-size:12px; color:${(activeCamp.waitState.details || '').includes('Sleep') ? '#a16207' : '#60a5fa'}; font-weight:600;">Simulating human behavior to protect your account.</div>
                 </div>
-                <div class="live-countdown" style="font-size:32px; font-weight:900; color:${(window._waitingDetails || '').includes('Sleep') ? '#d97706' : '#2563eb'}; font-variant-numeric: tabular-nums; min-width:105px; text-align:right;">
-                    ${Math.ceil((window._waitingUntil - Date.now()) / 1000)}s
+                <div class="live-countdown" style="font-size:32px; font-weight:900; color:${(activeCamp.waitState.details || '').includes('Sleep') ? '#d97706' : '#2563eb'}; font-variant-numeric: tabular-nums; min-width:105px; text-align:right;">
+                    ${Math.ceil((activeCamp.waitState.until - Date.now()) / 1000)}s
                 </div>
             </div>
             ` : `
@@ -5343,7 +5358,10 @@ function renderLaunchStep(leads) {
                             </tr>
                         </thead>
                         <tbody id="launch-activity-body">
-                            ${leads.map(l => `
+                            ${leads.filter(l => l.status === 'SENT' || l.status === 'FAILED')
+                                   .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0))
+                                   .slice(0, 100)
+                                   .map(l => `
                                 <tr id="launch-row-${l.phone}" style="background:${l.status === 'SENT' ? '#f0fdf4' : (l.status === 'FAILED' ? '#fef2f2' : 'transparent')}; border-bottom: 1px solid #f1f5f9;">
                                     <td style="font-family:monospace; font-weight:700;">+${l.phone}</td>
                                     <td class="worker-cell" style="font-size:12px; font-weight:700; color:var(--primary); font-family:monospace;">${l.senderNumber ? `+${l.senderNumber}` : '-'}</td>

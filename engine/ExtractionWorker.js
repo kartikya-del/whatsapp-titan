@@ -592,16 +592,20 @@ class ExtractionWorker extends EventEmitter {
             if (mediaPath && fs.existsSync(mediaPath)) {
                 const media = MessageMedia.fromFilePath(mediaPath)
                 const msg = await this.client.sendMessage(jid, media, { caption: text || null, sendMediaAsDocument: false, unsafeMime: true })
+                if (msg?.id?._serialized) this.registry.consume(this.number, 1)
                 if (!skipLock) { await this._delay(1000 + Math.random() * 2000); this._isOccupied = false; this._lastSimFinishedAt = Date.now() }
                 return { success: true, messageId: msg?.id?._serialized }
             } else {
                 const msg = await this.client.sendMessage(jid, text || " ")
+                if (msg?.id?._serialized) this.registry.consume(this.number, 1)
                 if (!skipLock) { await this._delay(1000 + Math.random() * 2000); this._isOccupied = false; this._lastSimFinishedAt = Date.now() }
                 return { success: true, messageId: msg?.id?._serialized }
             }
         } catch (err) {
             if (!skipLock) this._isOccupied = false
-            return await this._surgicalSendMessage(jid, text)
+            const result = await this._surgicalSendMessage(jid, text)
+            if (result && result.success) this.registry.consume(this.number, 1)
+            return result
         }
     }
 

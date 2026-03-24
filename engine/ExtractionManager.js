@@ -458,7 +458,7 @@ class ExtractionManager extends EventEmitter {
                 const contacts = await worker.extractGroupContacts(groupId, { resumeFrom });
                 allContacts.push(...contacts);
             }
-            this.registry.consume(number, allContacts.length)
+            // Removed: this.registry.consume(number, allContacts.length)
             this.emit('extraction:complete', { number, contacts: allContacts, contactCount: allContacts.length })
             this._pushToLane(number, 'system', { type: 'EXTRACTION_COMPLETE', contacts: allContacts });
             this.syncAccountState(number);
@@ -501,7 +501,7 @@ class ExtractionManager extends EventEmitter {
                 if (worker.isCancelled) break
 
                 // 🚀 TITAN: SLEEP MODE LOGIC
-                if (sleepThreshold > 0 && sessionSent > 0 && sessionSent % sleepThreshold === 0) {
+                if (sleepThreshold > 0 && sleepDuration > 0 && sessionSent > 0 && sessionSent % sleepThreshold === 0) {
                     const sleepSec = sleepDuration * 60
                     console.log(`[MANAGER] 😴 Sleep Mode Active: Pausing for ${sleepDuration} minutes...`)
                     this.emit('campaign:status', { campaignId, status: 'WAITING', details: `Sleep Mode: ${sleepDuration}m`, duration: sleepSec })
@@ -578,7 +578,7 @@ class ExtractionManager extends EventEmitter {
                 }
             }
         } catch (err) { }
-        this.registry.consume(number, sent)
+        // Removed: this.registry.consume(number, sent) - Now handled per-message in Worker
 
     }
 
